@@ -1,3 +1,32 @@
+#ifdef DEBUG
+
+#include <stdio.h>
+#include <string.h>
+
+unsigned char buffer[512];
+char message1[BUFSIZ];
+
+unsigned long fat_begin_lba;
+unsigned long fat_sect_per_clus;
+unsigned long fat_root_dir_first_clus;
+unsigned long fat_clus_begin_lba;
+unsigned long rom_size;
+
+// can be localized to fatInit
+unsigned long fat_part_begin_lba;
+char fat_systemid[8];
+unsigned long fat_num_resv_sect;
+unsigned long fat_num_fats;
+unsigned long fat_sect_per_fat;
+
+// can be localized to fatLoadTable
+unsigned long dir_num_files;
+char fat_volumeid[12];
+
+void cfSectorToRam(int ramaddr, int lba);
+void cfReadSector(unsigned char *buffer, int lba);
+
+#endif
 
 // 2-byte number
 unsigned short shortEndian(unsigned char *i)
@@ -249,6 +278,16 @@ int fatLoadTable()
 
 
 
+#ifdef DEBUG // local test version of CF read/write
+
+void cfSectorToRam(int ramaddr, int lba) {
+}
+
+void cfReadSector(unsigned char *buffer, int lba) {
+}
+
+#else // FPGA versions of CF read/write
+
 void cfSectorToRam(int ramaddr, int lba)
 {
     char buf[8];
@@ -319,3 +358,12 @@ void cfReadSector(unsigned char *buffer, int lba)
     osPiReadIo(0xB0000000, (u32)buf); while(osPiGetStatus() != 0);
 }
 
+#endif
+
+#ifdef DEBUG
+
+int main(void) {
+    return 0;
+}
+
+#endif
