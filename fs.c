@@ -324,7 +324,9 @@ void loadRomToRam(int ramaddr, int clus)
 
 
 
-
+/**
+ * Locate menu.bin in the root dir and load it into ram.
+ */
 int fatLoadTable()
 {
     fat_dirent de;
