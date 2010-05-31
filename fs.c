@@ -49,8 +49,6 @@ unsigned int intEndian(unsigned char *i)
 
 int fatInit()
 {
-    unsigned char temp[32];
-
     // read first sector
     cfReadSector(buffer, 0);
 
@@ -61,7 +59,7 @@ int fatInit()
     }
 
     // look for 'FAT'
-    if(strncmp(&buffer[82], "FAT", 3) == 0)
+    if(strncmp((char *)&buffer[82], "FAT", 3) == 0)
     {
         // this first sector is a Volume Boot Record
         fat_part_begin_lba = 0;
@@ -115,7 +113,12 @@ int fatInit()
 
 
 
+#ifdef DEBUG
 
+void loadRomToRam(int ramaddr, int clus) {
+}
+
+#else
 
 void loadRomToRam(int ramaddr, int clus)
 {
@@ -155,6 +158,8 @@ void loadRomToRam(int ramaddr, int clus)
 
 
 }
+
+#endif
 
 
 
@@ -224,7 +229,7 @@ int fatLoadTable()
             // we are looking for a file that's not a folder or volid
             //if( !((dir_data[11] & 24)==24) ){
                 rom_size = intEndian(&dir_data[0x1c]);
-                if(strncmp(dir_data, "MENU    BIN", 11) == 0)
+                if(strncmp((char *)dir_data, "MENU    BIN", 11) == 0)
                 {
                     sprintf(message1, "menu xfering, size %lu", rom_size);
                     current_clus_num = (int)dir_data[0x15] << 24 |

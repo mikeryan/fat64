@@ -1,4 +1,4 @@
-CFLAGS = -DDEBUG -g # -Wall -Werror
+CFLAGS = -DDEBUG -g -Wall -Werror
 
 all: fs
 
