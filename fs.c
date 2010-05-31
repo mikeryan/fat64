@@ -279,52 +279,43 @@ end_of_dir: // end of directory reached
 }
 
 #ifdef DEBUG
+#define osPiReadIo(X,Y) do { } while (0)
+#define osPiGetStatus() 0
+#endif
 
-void loadRomToRam(int ramaddr, int clus) {
-}
-
-#else
-
+/**
+ * Load the file beginning at clus to the RAM beginning at ramaddr.
+ */
 void loadRomToRam(int ramaddr, int clus)
 {
     unsigned int ram = ramaddr;
 
-    unsigned int current_clus_num = clus;
-    unsigned int next_clus_num;
-    unsigned int current_lba = fat_clus_begin_lba + ((current_clus_num - fat_root_dir_first_clus) * fat_sect_per_clus);
+    unsigned cluster_first_sector = CLUSTER_TO_SECTOR(clus);
+    unsigned sector = 0;
 
-    unsigned long sector_count = 0;
-
-    while(1)
-    {
+    while (1) {
         // transfer 512bytes to SDRAM
-        cfSectorToRam(ram, current_lba);
+        cfSectorToRam(ram, cluster_first_sector + sector);
         ram += 256;
-        current_lba++;
-        sector_count++;
+        ++sector;
 
-        if(ram*2 >= rom_size) return;
-        if(sector_count == fat_sect_per_clus)
-        {
-            // read the sector of FAT that contains the next cluster for this file
-            cfReadSector(buffer, fat_begin_lba + (current_clus_num / 128));
-            next_clus_num = intEndian(&buffer[(current_clus_num-(current_clus_num / 128)*128) * 4]) & 0x0FFFFFFF;
+        // load the next sector once we reach the end of this one
+        if (sector == fat_sect_per_clus) {
+            unsigned fat = fat_get_fat(clus);
+            if (fat >= 0x0ffffff8)
+                break;
 
-            if (next_clus_num >= 0x0ffffff8 ) {
-                return;
-            }else{
-                current_clus_num = next_clus_num;
-            }
-            sector_count = 0;
-            current_lba = fat_clus_begin_lba + ((current_clus_num - fat_root_dir_first_clus) * fat_sect_per_clus);
+            cluster_first_sector = fat;
+            sector = 0;
         }
     }
+
+    return;
+
+    // XXX is this ever called?
     osPiReadIo(0xB0000000, buffer); while(osPiGetStatus() != 0);
-
-
 }
 
-#endif
 
 
 
