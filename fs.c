@@ -1,7 +1,11 @@
 #ifdef DEBUG
 
+#include <err.h>
 #include <stdio.h>
 #include <string.h>
+
+// the disk image
+FILE *cf_file;
 
 unsigned char buffer[512];
 char message1[BUFSIZ];
@@ -31,20 +35,30 @@ void cfReadSector(unsigned char *buffer, int lba);
 // 2-byte number
 unsigned short shortEndian(unsigned char *i)
 {
+// assume little endian system for debug
+#ifdef DEBUG
+    return *(unsigned short *)i;
+#else
+
     int t = ((int)*(i+1)<<8) |
             ((int)*(i+0));
     return t;
+#endif
 }
 
 // 4-byte number
 unsigned int intEndian(unsigned char *i)
 {
+#ifdef DEBUG
+    return *(unsigned *)i;
+#else
     unsigned int t = ((int)*(i+3)<<24) |
             ((int)*(i+2)<<16) |
             ((int)*(i+1)<<8) |
             ((int)*(i+0));
 
     return t;
+#endif
 }
 
 int fatInit()
@@ -288,7 +302,21 @@ int fatLoadTable()
 void cfSectorToRam(int ramaddr, int lba) {
 }
 
+// read a sector 
 void cfReadSector(unsigned char *buffer, int lba) {
+    int ret = fseek(cf_file, lba * 512, SEEK_SET);
+    if (ret < 0)
+        goto error;
+
+    size_t count = fread(buffer, 512, 1, cf_file);
+    if (count != 1)
+        goto error;
+
+    return;
+
+error:
+    // if there's an error, return FF's
+    memset(buffer, 0xff, 512);
 }
 
 #else // FPGA versions of CF read/write
@@ -367,7 +395,26 @@ void cfReadSector(unsigned char *buffer, int lba)
 
 #ifdef DEBUG
 
-int main(void) {
+int main(int argc, char **argv) {
+    int ret;
+
+    if (argc < 2) {
+        printf("Usage: %s <file_system.img>\n", argv[0]);
+        return 1;
+    }
+
+    cf_file = fopen(argv[1], "r");
+    if (cf_file == NULL)
+        err(1, "Couldn't open %s for reading", argv[1]);
+
+    ret = fatInit();
+    if (ret != 0)
+        errx(1, "%s", message1);
+
+    ret = fatLoadTable();
+    if (ret != 0)
+        errx(1, "%s", message1);
+
     return 0;
 }
 
