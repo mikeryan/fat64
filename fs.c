@@ -7,6 +7,21 @@
 // the disk image
 FILE *cf_file;
 
+typedef struct _fat_dirent {
+    // file properties
+    char short_name[13];
+    int directory;
+    unsigned start_cluster;
+    unsigned size;
+
+    // metadata
+    int index;
+    int cluster;
+    int sector;
+} fat_dirent;
+
+int current_lba = -1;
+
 unsigned char buffer[512];
 char message1[BUFSIZ];
 
@@ -118,14 +133,106 @@ int fatInit()
     //sprintf(message1, "%s, %u, %u, %u, %u, %u, %u", fat_systemid, fat_part_begin_lba, fat_sect_per_clus, fat_num_resv_sect, fat_num_fats, fat_sect_per_fat, fat_root_dir_first_clus);
 }
 
+/**
+ * Get the root directory entry.
+ */
+int fat_root_dirent(fat_dirent *dirent) {
+    dirent->short_name[0] = 0;
+    dirent->directory = 0;
+    dirent->start_cluster = 0;
+    dirent->size = 0;
 
+    dirent->index = 0;
+    dirent->cluster = 0; // FIXME: why isn't this fat_root_dir_first_clus?
+    dirent->sector = 0;
 
+    return 0;
+}
 
+// first sector of a cluster
+#define CLUSTER_TO_SECTOR(X) ( fat_clus_begin_lba + (X) * fat_sect_per_clus )
 
+/**
+ * Read a directory.
+ * returns:
+ *   1  success
+ *   0  end of dir
+ *  -1  error
+ */
+int fat_readdir(fat_dirent *dirent) {
+    int found_file = 0;
+    int i, j;
 
+    if (dirent->index > 512 / 32) {
+        sprintf(message1, "invalid dirent");
+        return -1;
+    }
 
+    do {
+        if (dirent->index == 512/32) {
+            ++dirent->sector;
+            if (dirent->sector == fat_sect_per_clus) {
+                // TODO load next cluster, look up in FAT
+                dirent->index = 0;
+            }
+        }
 
+        int sector = CLUSTER_TO_SECTOR(dirent->cluster) + dirent->sector;
+        cfReadSector(buffer, sector);
 
+        int offset = dirent->index * 32;
+
+        // end of directory reached
+        if (buffer[offset] == 0) {
+            return 0;
+        }
+
+        ++dirent->index;
+
+        // deleted file, skip
+        if (buffer[offset] == 0xe5)
+            continue;
+
+        int attributes = buffer[offset + 0x0b];
+
+        // long filename, skip
+        if (attributes == 0x0f)
+            continue;
+
+        dirent->directory = attributes & 0x10 ? 1 : 0;
+
+        // you can thank FAT16 for this
+        dirent->start_cluster = shortEndian(buffer + offset + 0x14) << 16;
+        dirent->start_cluster |= shortEndian(buffer + offset + 0x1a);
+
+        dirent->size = intEndian(buffer + offset + 0x1c);
+
+        // copy the name
+        memcpy(dirent->short_name, buffer + offset, 8);
+
+        // kill trailing space
+        for (i = 8; i > 0 && dirent->short_name[i-1] == ' '; --i)
+            ;
+
+        // get the extension
+        dirent->short_name[i++] = '.';
+        memcpy(dirent->short_name + i, buffer + offset + 8, 3);
+
+        // kill trailing space
+        for (j = 3; j > 0 && dirent->short_name[i+j-1] == ' '; --j)
+            ;
+
+        // hack! kill the . if there's no extension
+        if (j == 0) --j;
+
+        dirent->short_name[i+j] = 0;
+
+        found_file = 1;
+    }
+    while (!found_file);
+
+    return 1;
+}
 
 #ifdef DEBUG
 
@@ -304,6 +411,9 @@ void cfSectorToRam(int ramaddr, int lba) {
 
 // read a sector 
 void cfReadSector(unsigned char *buffer, int lba) {
+    if (current_lba == lba)
+        return;
+
     int ret = fseek(cf_file, lba * 512, SEEK_SET);
     if (ret < 0)
         goto error;
@@ -312,6 +422,7 @@ void cfReadSector(unsigned char *buffer, int lba) {
     if (count != 1)
         goto error;
 
+    current_lba = lba;
     return;
 
 error:
@@ -325,6 +436,9 @@ void cfSectorToRam(int ramaddr, int lba)
 {
     char buf[8];
     long timeout = 0;
+
+    if (current_lba == lba)
+        return;
 
     // first poll the status register until it's good
     do{
@@ -342,6 +456,8 @@ void cfSectorToRam(int ramaddr, int lba)
 
     // write "read sector to ram" command
     osPiWriteIo(0xB8000208, 2); while(osPiGetStatus() != 0);
+
+    current_lba = lba;
 }
 
 
@@ -413,6 +529,19 @@ int main(int argc, char **argv) {
 
     ret = fatLoadTable();
     if (ret != 0)
+        errx(1, "%s", message1);
+
+    fat_dirent de;
+    fat_root_dirent(&de);
+
+    while ((ret = fat_readdir(&de)) > 0)
+        printf(
+            "%-12s (%c) %5d\n",
+            de.short_name, de.directory ? 'd' : 'f',
+            de.start_cluster
+        );
+
+    if (ret < 0)
         errx(1, "%s", message1);
 
     return 0;
