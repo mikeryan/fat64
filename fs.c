@@ -206,7 +206,7 @@ int fat_readdir(fat_dirent *dirent) {
             if (dirent->sector == fat_sect_per_clus) {
                 // look up the cluster number in the FAT
                 unsigned fat_entry = fat_get_fat(dirent->cluster);
-                if (fat_entry > 0x0ffffff8) // last cluster
+                if (fat_entry >= 0x0ffffff8) // last cluster
                     goto end_of_dir;
 
                 dirent->cluster = fat_entry;
