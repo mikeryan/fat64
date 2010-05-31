@@ -18,6 +18,8 @@ typedef struct _fat_dirent {
     int index;
     int cluster;
     int sector;
+
+    int first_cluster;
 } fat_dirent;
 
 int current_lba = -1;
@@ -145,6 +147,7 @@ int fat_root_dirent(fat_dirent *dirent) {
     dirent->index = 0;
     dirent->cluster = 0; // FIXME: why isn't this fat_root_dir_first_clus?
     dirent->sector = 0;
+    dirent->first_cluster = 0;
 
     return 0;
 }
@@ -184,6 +187,11 @@ int fat_readdir(fat_dirent *dirent) {
 
         // end of directory reached
         if (buffer[offset] == 0) {
+            // reset the metadata to point to the beginning of the dir
+            dirent->index = 0;
+            dirent->cluster = dirent->first_cluster;
+            dirent->sector = 0;
+
             return 0;
         }
 
