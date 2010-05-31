@@ -336,108 +336,39 @@ void loadRomToRam(int ramaddr, int clus)
 
 int fatLoadTable()
 {
-    unsigned char dir_data[32];
-    short dir_num = 0;
+    fat_dirent de;
+    int ret;
 
-    unsigned int current_clus_num = fat_root_dir_first_clus;
-    unsigned int current_lba;
-    unsigned int sector_count = 0;
-    unsigned int next_clus_num;
+    fat_root_dirent(&de);
 
-    dir_num_files = 0;
+    // read the directory
+    while ((ret = fat_readdir(&de)) > 0)
+        // break if we find menu.bin
+        if (strcmp(de.short_name, "MENU.BIN") == 0)
+            break;
 
-    //temp = 546787;
-
-    // grab root dir
-    current_lba = fat_clus_begin_lba;
-    cfReadSector(buffer, current_lba);
-    while(1){
-        // read the directory into the dir buffer
-        memcpy(dir_data, buffer+dir_num*32, 32);
-
-        // look at the attribute bit and find what kind of entry it is
-
-        if((dir_data[11] & 15) == 15){
-            // long filename text (all four type bits set)
-            sprintf(message1, "long filename");
-        }else if(dir_data[0] == 0xe5){
-            // unused
-
-        }else if(dir_data[0] == 0){
-            // end of directory
+    // either we reached EOD or there was an error
+    if (ret <= 0) {
+        if (ret == 0)
             sprintf(message1, "menu.bin not found!");
-            return 1;
-        }else if((dir_data[11] & 8) == 8){
-            // volume id
-            memcpy(fat_volumeid, dir_data, 11);
-            fat_volumeid[11] = 0;                                       // null-terminated
-        }else{
-            // normal directory entry! whew
-
-            if(dir_data[11] & 1){
-                // read only
-            }
-            if(dir_data[11] & 2){
-                // hidden
-            }
-            if(dir_data[11] & 4){
-                // system
-            }
-
-            if(dir_data[11] & 16){
-                // directory
-            }
-            if(dir_data[11] & 32){
-                // archive
-            }
-
-            // we are looking for a file that's not a folder or volid
-            //if( !((dir_data[11] & 24)==24) ){
-                rom_size = intEndian(&dir_data[0x1c]);
-                if(strncmp((char *)dir_data, "MENU    BIN", 11) == 0)
-                {
-                    sprintf(message1, "menu xfering, size %lu", rom_size);
-                    current_clus_num = (int)dir_data[0x15] << 24 |
-                                  (int)dir_data[0x14] << 16 |
-                                  (int)dir_data[0x1b] << 8 |
-                                  (int)dir_data[0x1a] ;
-
-                    loadRomToRam(0x0, current_clus_num);
-
-                    sprintf(message1, "current_clus %u", current_clus_num);
-                    return 0;
-                }
-                dir_num_files ++;
-            //}
-
-        }
-
-        dir_num++;
-        if(dir_num == 16){
-            // reached the end of the sector, get the next one
-            dir_num = 0;
-
-            current_lba++;
-            cfReadSector(buffer, current_lba);
-
-            // continue until we reach end of the cluster
-            sector_count++;
-            if(sector_count == fat_sect_per_clus){
-                // read the sector of FAT that contains the next cluster for this file
-                cfReadSector(buffer, fat_begin_lba + (current_clus_num >> 7));
-
-                next_clus_num = intEndian(&buffer[(current_clus_num-(current_clus_num / 128)*128) * 4]) & 0x0FFFFFFF;
-
-                if (next_clus_num >= 0x0ffffff8 ) {
-                    sprintf(message1, "menu.bin not found!");
-                    return 1;
-                }else{
-                    current_clus_num = next_clus_num;
-                }
-                cfReadSector(buffer, fat_clus_begin_lba + ((current_clus_num - fat_root_dir_first_clus) * fat_sect_per_clus));
-            }
-        }
+        return 1;
     }
+
+    if (de.directory) {
+        sprintf(message1, "menu.bin is not a normal file");
+        return 1;
+    }
+
+    if (de.size == 0) {
+        sprintf(message1, "menu.bin is empty");
+        return 1;
+    }
+
+    // menu.bin exists, normal file
+    sprintf(message1, "menu xfering, size %u", de.size);
+    loadRomToRam(0x0, de.start_cluster);
+
+    return 0;
 }
 
 
