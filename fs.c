@@ -136,6 +136,32 @@ int fatInit()
 }
 
 /**
+ * Get the sector # and offset into the sector for a given cluster.
+ */
+void fat_sector_offset(int cluster, unsigned *fat_sector, unsigned *fat_offset) {
+    unsigned index = cluster * 4;   // each cluster is 4 bytes long
+    unsigned sector = index / 512;  // 512 bytes per sector, rounds down
+
+    *fat_sector = fat_begin_lba + sector;
+    *fat_offset = index - sector * 512;
+}
+
+/**
+ * Get the FAT entry for a given cluster.
+ */
+unsigned fat_get_fat(int cluster) {
+    unsigned sector, offset;
+
+    // get the sector of the FAT and offset into the sector
+    fat_sector_offset(cluster, &sector, &offset);
+
+    // read the sector
+    cfReadSector(buffer, sector);
+
+    return intEndian(buffer + offset);
+}
+
+/**
  * Get the root directory entry.
  */
 int fat_root_dirent(fat_dirent *dirent) {
@@ -145,15 +171,15 @@ int fat_root_dirent(fat_dirent *dirent) {
     dirent->size = 0;
 
     dirent->index = 0;
-    dirent->cluster = 0; // FIXME: why isn't this fat_root_dir_first_clus?
+    dirent->cluster = fat_root_dir_first_clus;
     dirent->sector = 0;
-    dirent->first_cluster = 0;
+    dirent->first_cluster = fat_root_dir_first_clus;
 
     return 0;
 }
 
 // first sector of a cluster
-#define CLUSTER_TO_SECTOR(X) ( fat_clus_begin_lba + (X) * fat_sect_per_clus )
+#define CLUSTER_TO_SECTOR(X) ( fat_clus_begin_lba + (X - 2) * fat_sect_per_clus )
 
 /**
  * Read a directory.
@@ -173,10 +199,18 @@ int fat_readdir(fat_dirent *dirent) {
 
     do {
         if (dirent->index == 512/32) {
+            dirent->index = 0;
             ++dirent->sector;
+
+            // load the next cluster once we reach the end of this
             if (dirent->sector == fat_sect_per_clus) {
-                // TODO load next cluster, look up in FAT
-                dirent->index = 0;
+                // look up the cluster number in the FAT
+                unsigned fat_entry = fat_get_fat(dirent->cluster);
+                if (fat_entry > 0x0ffffff8) // last cluster
+                    goto end_of_dir;
+
+                dirent->cluster = fat_entry;
+                dirent->sector = 0;
             }
         }
 
@@ -186,14 +220,8 @@ int fat_readdir(fat_dirent *dirent) {
         int offset = dirent->index * 32;
 
         // end of directory reached
-        if (buffer[offset] == 0) {
-            // reset the metadata to point to the beginning of the dir
-            dirent->index = 0;
-            dirent->cluster = dirent->first_cluster;
-            dirent->sector = 0;
-
-            return 0;
-        }
+        if (buffer[offset] == 0)
+            goto end_of_dir;
 
         ++dirent->index;
 
@@ -240,6 +268,14 @@ int fat_readdir(fat_dirent *dirent) {
     while (!found_file);
 
     return 1;
+
+end_of_dir: // end of directory reached
+    // reset the metadata to point to the beginning of the dir
+    dirent->index = 0;
+    dirent->cluster = dirent->first_cluster;
+    dirent->sector = 0;
+
+    return 0;
 }
 
 #ifdef DEBUG
