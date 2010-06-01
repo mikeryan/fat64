@@ -10,6 +10,7 @@ FILE *cf_file;
 typedef struct _fat_dirent {
     // file properties
     char short_name[13];
+    char long_name[256];
     int directory;
     unsigned start_cluster;
     unsigned size;
@@ -166,6 +167,7 @@ unsigned fat_get_fat(int cluster) {
  */
 int fat_root_dirent(fat_dirent *dirent) {
     dirent->short_name[0] = 0;
+    dirent->long_name[0] = 0;
     dirent->directory = 0;
     dirent->start_cluster = 0;
     dirent->size = 0;
@@ -196,6 +198,8 @@ int fat_readdir(fat_dirent *dirent) {
         sprintf(message1, "invalid dirent");
         return -1;
     }
+
+    dirent->long_name[0] = 0;
 
     do {
         if (dirent->index == 512/32) {
@@ -231,9 +235,36 @@ int fat_readdir(fat_dirent *dirent) {
 
         int attributes = buffer[offset + 0x0b];
 
-        // long filename, skip
-        if (attributes == 0x0f)
+        // long filename, copy the bytes and move along
+        if (attributes == 0x0f) {
+            int segment = (buffer[offset] & 0x1F) - 1;
+            if (segment < 0 || segment > 19)
+                continue; // invalid segment
+
+            char *dest = dirent->long_name + segment * 13;
+
+            for (i = 0; i < 5; ++i)
+                dest[i] = buffer[offset + 1 + i * 2];
+
+            for (j = 0; j < 3; ++j)
+                dest[i+j] = buffer[offset + 0xe + j * 2];
+
+            // last segment can only have 9 characters
+            if (segment == 19) {
+                dest[i+j] = 0;
+                continue;
+            }
+
+            for ( ; j < 6; ++j)
+                dest[i+j] = buffer[offset + 0xe + j * 2];
+
+            i += j;
+
+            for (j = 0; j < 2; ++j)
+                dest[i+j] = buffer[offset + 0x1c + j * 2];
+
             continue;
+        }
 
         dirent->directory = attributes & 0x10 ? 1 : 0;
 
@@ -504,9 +535,10 @@ int main(int argc, char **argv) {
 
     while ((ret = fat_readdir(&de)) > 0)
         printf(
-            "%-12s (%c) %5d\n",
+            "%-12s (%c) %5d %s\n",
             de.short_name, de.directory ? 'd' : 'f',
-            de.start_cluster
+            de.start_cluster,
+            de.long_name
         );
 
     if (ret < 0)
