@@ -314,6 +314,19 @@ end_of_dir: // end of directory reached
 #define osPiGetStatus() 0
 #endif
 
+void sectors_to_ram(unsigned ram, unsigned start_sector, unsigned count_sectors) {
+    sprintf(
+        message1,
+        "copying to %08x from sector %u, number of sectors %u",
+        ram,
+        start_sector,
+        count_sectors
+    );
+#ifdef DEBUG
+    printf("%s\n", message1);
+#endif
+}
+
 /**
  * Load the file beginning at clus to the RAM beginning at ramaddr.
  */
@@ -321,24 +334,23 @@ void loadRomToRam(int ramaddr, int clus)
 {
     unsigned int ram = ramaddr;
 
-    unsigned sector = CLUSTER_TO_SECTOR(clus);
-    unsigned sector_count = 0;
+    unsigned start_cluster = clus;
+    unsigned current_cluster = start_cluster;
 
-    while (1) {
-        // transfer 512bytes to SDRAM
-        cfSectorToRam(ram, sector + sector_count);
-        ram += 256;
-        ++sector;
+    while (start_cluster < 0x0ffffff8) {
+        unsigned next_cluster = fat_get_fat(current_cluster);
 
-        // load the next sector once we reach the end of this one
-        if (sector_count == fat_sect_per_clus) {
-            unsigned fat = fat_get_fat(clus);
-            if (fat >= 0x0ffffff8)
-                break;
+        // contiguous so far, keep copying
+        if (next_cluster != current_cluster + 1) {
+            unsigned start_sector = CLUSTER_TO_SECTOR(start_cluster);
+            unsigned clusters = current_cluster - start_cluster + 1;
+            sectors_to_ram(ram, start_sector, clusters * fat_sect_per_clus);
 
-            sector = fat;
-            sector_count = 0;
+            start_cluster = next_cluster;
+            ram += clusters * fat_sect_per_clus * 512;
         }
+
+        current_cluster = next_cluster;
     }
 
     return;
