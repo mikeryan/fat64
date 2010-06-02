@@ -321,23 +321,23 @@ void loadRomToRam(int ramaddr, int clus)
 {
     unsigned int ram = ramaddr;
 
-    unsigned cluster_first_sector = CLUSTER_TO_SECTOR(clus);
-    unsigned sector = 0;
+    unsigned sector = CLUSTER_TO_SECTOR(clus);
+    unsigned sector_count = 0;
 
     while (1) {
         // transfer 512bytes to SDRAM
-        cfSectorToRam(ram, cluster_first_sector + sector);
+        cfSectorToRam(ram, sector + sector_count);
         ram += 256;
         ++sector;
 
         // load the next sector once we reach the end of this one
-        if (sector == fat_sect_per_clus) {
+        if (sector_count == fat_sect_per_clus) {
             unsigned fat = fat_get_fat(clus);
             if (fat >= 0x0ffffff8)
                 break;
 
-            cluster_first_sector = fat;
-            sector = 0;
+            sector = fat;
+            sector_count = 0;
         }
     }
 
