@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <string.h>
 
+typedef unsigned int uint32_t;
+
 // the disk image
 FILE *cf_file;
 
@@ -12,41 +14,41 @@ typedef struct _fat_dirent {
     char short_name[13];
     char long_name[256];
     int directory;
-    unsigned start_cluster;
-    unsigned size;
+    uint32_t start_cluster;
+    uint32_t size;
 
     // metadata
-    int index;
-    int cluster;
-    int sector;
+    uint32_t index;
+    uint32_t cluster;
+    uint32_t sector;
 
-    int first_cluster;
+    uint32_t first_cluster;
 } fat_dirent;
 
-int current_lba = -1;
+uint32_t current_lba = -1;
 
 unsigned char buffer[512];
 char message1[BUFSIZ];
 
-unsigned long fat_begin_lba;
-unsigned long fat_sect_per_clus;
-unsigned long fat_root_dir_first_clus;
-unsigned long fat_clus_begin_lba;
-unsigned long rom_size;
+uint32_t fat_begin_lba;
+uint32_t fat_sect_per_clus;
+uint32_t fat_root_dir_first_clus;
+uint32_t fat_clus_begin_lba;
+uint32_t rom_size;
 
 // can be localized to fatInit
-unsigned long fat_part_begin_lba;
+uint32_t fat_part_begin_lba;
 char fat_systemid[8];
-unsigned long fat_num_resv_sect;
-unsigned long fat_num_fats;
-unsigned long fat_sect_per_fat;
+uint32_t fat_num_resv_sect;
+uint32_t fat_num_fats;
+uint32_t fat_sect_per_fat;
 
 // can be localized to fatLoadTable
-unsigned long dir_num_files;
+uint32_t dir_num_files;
 char fat_volumeid[12];
 
-void cfSectorToRam(int ramaddr, int lba);
-void cfReadSector(unsigned char *buffer, int lba);
+void cfSectorToRam(uint32_t ramaddr, uint32_t lba);
+void cfReadSector(unsigned char *buffer, uint32_t lba);
 
 #endif
 
@@ -65,12 +67,12 @@ unsigned short shortEndian(unsigned char *i)
 }
 
 // 4-byte number
-unsigned int intEndian(unsigned char *i)
+uint32_t intEndian(unsigned char *i)
 {
 #ifdef DEBUG
-    return *(unsigned *)i;
+    return *(uint32_t *)i;
 #else
-    unsigned int t = ((int)*(i+3)<<24) |
+    uint32_t t = ((int)*(i+3)<<24) |
             ((int)*(i+2)<<16) |
             ((int)*(i+1)<<8) |
             ((int)*(i+0));
@@ -139,9 +141,9 @@ int fatInit()
 /**
  * Get the sector # and offset into the sector for a given cluster.
  */
-void fat_sector_offset(int cluster, unsigned *fat_sector, unsigned *fat_offset) {
-    unsigned index = cluster * 4;   // each cluster is 4 bytes long
-    unsigned sector = index / 512;  // 512 bytes per sector, rounds down
+void fat_sector_offset(uint32_t cluster, uint32_t *fat_sector, uint32_t *fat_offset) {
+    uint32_t index = cluster * 4;   // each cluster is 4 bytes long
+    uint32_t sector = index / 512;  // 512 bytes per sector, rounds down
 
     *fat_sector = fat_begin_lba + sector;
     *fat_offset = index - sector * 512;
@@ -150,8 +152,8 @@ void fat_sector_offset(int cluster, unsigned *fat_sector, unsigned *fat_offset) 
 /**
  * Get the FAT entry for a given cluster.
  */
-unsigned fat_get_fat(int cluster) {
-    unsigned sector, offset;
+uint32_t fat_get_fat(uint32_t cluster) {
+    uint32_t sector, offset;
 
     // get the sector of the FAT and offset into the sector
     fat_sector_offset(cluster, &sector, &offset);
@@ -209,7 +211,7 @@ int fat_readdir(fat_dirent *dirent) {
             // load the next cluster once we reach the end of this
             if (dirent->sector == fat_sect_per_clus) {
                 // look up the cluster number in the FAT
-                unsigned fat_entry = fat_get_fat(dirent->cluster);
+                uint32_t fat_entry = fat_get_fat(dirent->cluster);
                 if (fat_entry >= 0x0ffffff8) // last cluster
                     goto end_of_dir;
 
@@ -218,10 +220,10 @@ int fat_readdir(fat_dirent *dirent) {
             }
         }
 
-        int sector = CLUSTER_TO_SECTOR(dirent->cluster) + dirent->sector;
+        uint32_t sector = CLUSTER_TO_SECTOR(dirent->cluster) + dirent->sector;
         cfReadSector(buffer, sector);
 
-        int offset = dirent->index * 32;
+        uint32_t offset = dirent->index * 32;
 
         // end of directory reached
         if (buffer[offset] == 0)
@@ -233,11 +235,11 @@ int fat_readdir(fat_dirent *dirent) {
         if (buffer[offset] == 0xe5)
             continue;
 
-        int attributes = buffer[offset + 0x0b];
+        uint32_t attributes = buffer[offset + 0x0b];
 
         // long filename, copy the bytes and move along
         if (attributes == 0x0f) {
-            int segment = (buffer[offset] & 0x1F) - 1;
+            uint32_t segment = (buffer[offset] & 0x1F) - 1;
             if (segment < 0 || segment > 19)
                 continue; // invalid segment
 
@@ -314,7 +316,7 @@ end_of_dir: // end of directory reached
 #define osPiGetStatus() 0
 #endif
 
-void sectors_to_ram(unsigned ram, unsigned start_sector, unsigned count_sectors) {
+void sectors_to_ram(uint32_t ram, uint32_t start_sector, uint32_t count_sectors) {
     sprintf(
         message1,
         "copying to %08x from sector %u, number of sectors %u",
@@ -330,20 +332,20 @@ void sectors_to_ram(unsigned ram, unsigned start_sector, unsigned count_sectors)
 /**
  * Load the file beginning at clus to the RAM beginning at ramaddr.
  */
-void loadRomToRam(int ramaddr, int clus)
+void loadRomToRam(uint32_t ramaddr, uint32_t clus)
 {
-    unsigned int ram = ramaddr;
+    uint32_t ram = ramaddr;
 
-    unsigned start_cluster = clus;
-    unsigned current_cluster = start_cluster;
+    uint32_t start_cluster = clus;
+    uint32_t current_cluster = start_cluster;
 
     while (start_cluster < 0x0ffffff8) {
-        unsigned next_cluster = fat_get_fat(current_cluster);
+        uint32_t next_cluster = fat_get_fat(current_cluster);
 
         // contiguous so far, keep copying
         if (next_cluster != current_cluster + 1) {
-            unsigned start_sector = CLUSTER_TO_SECTOR(start_cluster);
-            unsigned clusters = current_cluster - start_cluster + 1;
+            uint32_t start_sector = CLUSTER_TO_SECTOR(start_cluster);
+            uint32_t clusters = current_cluster - start_cluster + 1;
             sectors_to_ram(ram, start_sector, clusters * fat_sect_per_clus);
 
             start_cluster = next_cluster;
@@ -417,11 +419,11 @@ int fatLoadTable()
 
 #ifdef DEBUG // local test version of CF read/write
 
-void cfSectorToRam(int ramaddr, int lba) {
+void cfSectorToRam(uint32_t ramaddr, uint32_t lba) {
 }
 
 // read a sector 
-void cfReadSector(unsigned char *buffer, int lba) {
+void cfReadSector(unsigned char *buffer, uint32_t lba) {
     if (current_lba == lba)
         return;
 
@@ -443,7 +445,7 @@ error:
 
 #else // FPGA versions of CF read/write
 
-void cfSectorToRam(int ramaddr, int lba)
+void cfSectorToRam(uint32_t ramaddr, uint32_t lba)
 {
     char buf[8];
     long timeout = 0;
@@ -478,7 +480,7 @@ void cfSectorToRam(int ramaddr, int lba)
 
 
 
-void cfReadSector(unsigned char *buffer, int lba)
+void cfReadSector(unsigned char *buffer, uint32_t lba)
 {
     char buf[8];
     long timeout = 0;
