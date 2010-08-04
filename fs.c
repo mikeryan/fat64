@@ -30,6 +30,10 @@ uint32_t current_lba = -1;
 unsigned char buffer[512];
 char message1[BUFSIZ];
 
+unsigned char fat_buffer[512];
+unsigned long fat_buffer_sector = -1;
+
+
 uint32_t fat_begin_lba;
 uint32_t fat_sect_per_clus;
 uint32_t fat_root_dir_first_clus;
@@ -47,8 +51,23 @@ uint32_t fat_sect_per_fat;
 uint32_t dir_num_files;
 char fat_volumeid[12];
 
+int             compat_mode = 0;
+
+void loadRomToRam(uint32_t ramaddr, uint32_t clus);
+
 void cfSectorToRam(uint32_t ramaddr, uint32_t lba);
+void cfSectorsToRam(uint32_t ramaddr, uint32_t lba, int sectors);
 void cfReadSector(unsigned char *buffer, uint32_t lba);
+
+void cfSetCycleTime(int cycletime);
+int cfOptimizeCycleTime();
+
+void fat_sector_offset(uint32_t cluster, uint32_t *fat_sector, uint32_t *fat_offset);
+uint32_t fat_get_fat(uint32_t cluster);
+
+uint32_t intEndian(unsigned char *i);
+unsigned short shortEndian(unsigned char *i);
+int fat_root_dirent(fat_dirent *dirent);
 
 #endif
 
@@ -67,7 +86,7 @@ unsigned short shortEndian(unsigned char *i)
 }
 
 // 4-byte number
-uint32_t intEndian(unsigned char *i)
+unsigned int intEndian(unsigned char *i)
 {
 #ifdef DEBUG
     return *(uint32_t *)i;
@@ -88,9 +107,19 @@ int fatInit()
 
     // check for MBR/VBR magic
     if( !(buffer[0x1fe]==0x55 && buffer[0x1ff]==0xAA) ){
-        sprintf(message1, "no cf card or bad filesystem");
+        sprintf(message1, "No CF card / bad filesystem");
         return 1;
     }
+
+#ifndef DEBUG
+    // now speed things up!
+    if(compat_mode)
+    {
+        cfSetCycleTime(30);
+    }else{
+        cfOptimizeCycleTime();
+    }
+#endif
 
     // look for 'FAT'
     if(strncmp((char *)&buffer[82], "FAT", 3) == 0)
@@ -108,15 +137,6 @@ int fatInit()
     memcpy(fat_systemid, &buffer[82], 8);
     fat_systemid[8] = 0;
 
-    // check for antique FATs
-    if(strncmp(fat_systemid, "FAT12", 5) == 0){
-        sprintf(message1, "FAT12 format, won't work.");
-        return 1;
-    }
-    if(strncmp(fat_systemid, "FAT16", 5) == 0){
-        sprintf(message1, "FAT16 format, won't work.");
-        return 1;
-    }
     if(strncmp(fat_systemid, "FAT32", 5) != 0){
         // not a fat32 volume
         sprintf(message1, "FAT32 partition not found.");
@@ -132,7 +152,7 @@ int fatInit()
     fat_begin_lba = fat_part_begin_lba + fat_num_resv_sect;
     fat_clus_begin_lba = fat_begin_lba + (fat_num_fats * fat_sect_per_fat);
 
-    sprintf(message1, "loaded successfully.");
+    sprintf(message1, "Loaded successfully.");
 
     return 0;
     //sprintf(message1, "%s, %u, %u, %u, %u, %u, %u", fat_systemid, fat_part_begin_lba, fat_sect_per_clus, fat_num_resv_sect, fat_num_fats, fat_sect_per_fat, fat_root_dir_first_clus);
@@ -153,15 +173,20 @@ void fat_sector_offset(uint32_t cluster, uint32_t *fat_sector, uint32_t *fat_off
  * Get the FAT entry for a given cluster.
  */
 uint32_t fat_get_fat(uint32_t cluster) {
-    uint32_t sector, offset;
+    uint32_t sector;
+    uint32_t offset;
 
     // get the sector of the FAT and offset into the sector
     fat_sector_offset(cluster, &sector, &offset);
 
-    // read the sector
-    cfReadSector(buffer, sector);
+    // only read sector if it has changed! saves time
+    if(sector != fat_buffer_sector){
+        // read the sector
+        cfReadSector(fat_buffer, sector);
+        fat_buffer_sector = sector;
+    }
 
-    return intEndian(buffer + offset);
+    return intEndian(&fat_buffer[offset]);
 }
 
 /**
@@ -196,8 +221,16 @@ int fat_readdir(fat_dirent *dirent) {
     int found_file = 0;
     int i, j;
 
+    uint32_t sector;
+    uint32_t offset;
+    uint32_t attributes;
+    uint32_t segment;
+    uint32_t fat_entry;
+
+    char *dest;
+
     if (dirent->index > 512 / 32) {
-        sprintf(message1, "invalid dirent");
+        sprintf(message1, "Invalid directory");
         return -1;
     }
 
@@ -211,7 +244,7 @@ int fat_readdir(fat_dirent *dirent) {
             // load the next cluster once we reach the end of this
             if (dirent->sector == fat_sect_per_clus) {
                 // look up the cluster number in the FAT
-                uint32_t fat_entry = fat_get_fat(dirent->cluster);
+                fat_entry = fat_get_fat(dirent->cluster);
                 if (fat_entry >= 0x0ffffff8) // last cluster
                     goto end_of_dir;
 
@@ -220,10 +253,10 @@ int fat_readdir(fat_dirent *dirent) {
             }
         }
 
-        uint32_t sector = CLUSTER_TO_SECTOR(dirent->cluster) + dirent->sector;
+        sector = CLUSTER_TO_SECTOR(dirent->cluster) + dirent->sector;
         cfReadSector(buffer, sector);
 
-        uint32_t offset = dirent->index * 32;
+        offset = dirent->index * 32;
 
         // end of directory reached
         if (buffer[offset] == 0)
@@ -235,15 +268,15 @@ int fat_readdir(fat_dirent *dirent) {
         if (buffer[offset] == 0xe5)
             continue;
 
-        uint32_t attributes = buffer[offset + 0x0b];
+        attributes = buffer[offset + 0x0b];
 
         // long filename, copy the bytes and move along
         if (attributes == 0x0f) {
-            uint32_t segment = (buffer[offset] & 0x1F) - 1;
+            segment = (buffer[offset] & 0x1F) - 1;
             if (segment < 0 || segment > 19)
                 continue; // invalid segment
 
-            char *dest = dirent->long_name + segment * 13;
+            dest = (dirent->long_name + segment * 13);
 
             for (i = 0; i < 5; ++i)
                 dest[i] = buffer[offset + 1 + i * 2];
@@ -338,27 +371,29 @@ void loadRomToRam(uint32_t ramaddr, uint32_t clus)
 
     uint32_t start_cluster = clus;
     uint32_t current_cluster = start_cluster;
+    uint32_t next_cluster;
 
+    uint32_t start_sector;
+    uint32_t clusters;
+    
     while (start_cluster < 0x0ffffff8) {
-        uint32_t next_cluster = fat_get_fat(current_cluster);
+        next_cluster = fat_get_fat(current_cluster);
 
         // contiguous so far, keep copying
-        if (next_cluster != current_cluster + 1) {
-            uint32_t start_sector = CLUSTER_TO_SECTOR(start_cluster);
-            uint32_t clusters = current_cluster - start_cluster + 1;
-            sectors_to_ram(ram, start_sector, clusters * fat_sect_per_clus);
+        if (next_cluster != current_cluster + 1)  
+        {
+            start_sector = CLUSTER_TO_SECTOR(start_cluster);
+            clusters = current_cluster - start_cluster + 1;
+            cfSectorsToRam(ram, start_sector, clusters * fat_sect_per_clus);
 
             start_cluster = next_cluster;
-            ram += clusters * fat_sect_per_clus * 512;
+            ram += clusters * fat_sect_per_clus * 512 / 2;
         }
 
         current_cluster = next_cluster;
     }
 
     return;
-
-    // XXX is this ever called?
-    osPiReadIo(0xB0000000, buffer); while(osPiGetStatus() != 0);
 }
 
 
@@ -375,30 +410,32 @@ void loadRomToRam(uint32_t ramaddr, uint32_t clus)
 int fatLoadTable()
 {
     fat_dirent de;
-    int ret;
+    int ret = -1;
 
     fat_root_dirent(&de);
 
     // read the directory
-    while ((ret = fat_readdir(&de)) > 0)
-        // break if we find menu.bin
-        if (strcmp(de.short_name, "MENU.BIN") == 0)
-            break;
+    do{
+        ret = fat_readdir(&de);
+
+        if (strcmp(de.short_name, "MENU.BIN") == 0)     break;
+    }while (ret > 0);
+
 
     // either we reached EOD or there was an error
     if (ret <= 0) {
         if (ret == 0)
-            sprintf(message1, "menu.bin not found!");
+            sprintf(message1, "MENU.BIN not found!");
         return 1;
     }
 
     if (de.directory) {
-        sprintf(message1, "menu.bin is not a normal file");
+        sprintf(message1, "MENU.BIN abnormal!");
         return 1;
     }
 
     if (de.size == 0) {
-        sprintf(message1, "menu.bin is empty");
+        sprintf(message1, "MENU.BIN is empty");
         return 1;
     }
 
@@ -420,6 +457,9 @@ int fatLoadTable()
 #ifdef DEBUG // local test version of CF read/write
 
 void cfSectorToRam(uint32_t ramaddr, uint32_t lba) {
+}
+
+void cfSectorsToRam(uint32_t ramaddr, uint32_t lba, int sectors) {
 }
 
 // read a sector 
@@ -445,23 +485,27 @@ error:
 
 #else // FPGA versions of CF read/write
 
-void cfSectorToRam(uint32_t ramaddr, uint32_t lba)
+void cfWaitCI()
 {
-    char buf[8];
     long timeout = 0;
+    char buf[8];
 
-    if (current_lba == lba)
-        return;
-
-    // first poll the status register until it's good
+    // poll the status register until it's good
     do{
         osPiReadIo(0xB8000200, buf); while(osPiGetStatus() != 0);
         timeout++;
-        if(timeout == 60000000){
-            sprintf(message1, "timed out. (sectoram1)");
+        if(timeout == 50000000){
+            sprintf(message1, "Timed out.");
+            fail = 1;
             return;
         }
     }while((buf[0] | buf[1] | buf[2] | buf[3]) != 0);
+}
+
+
+void cfSectorToRam(uint32_t ramaddr, uint32_t lba)
+{
+    cfWaitCI();
 
     // write LBA to the fpga register
     osPiWriteIo(0xB8000000, lba ); while(osPiGetStatus() != 0);
@@ -470,45 +514,83 @@ void cfSectorToRam(uint32_t ramaddr, uint32_t lba)
     // write "read sector to ram" command
     osPiWriteIo(0xB8000208, 2); while(osPiGetStatus() != 0);
 
-    current_lba = lba;
+    cfWaitCI();
 }
 
 
 
 
+void cfSectorsToRam(uint32_t ramaddr, uint32_t lba, int sectors)
+{
+    cfWaitCI();
 
+    // write LBA to the fpga register
+    osPiWriteIo(0xB8000000, lba ); while(osPiGetStatus() != 0);
+    osPiWriteIo(0xB8000004, ramaddr); while(osPiGetStatus() != 0);
+    osPiWriteIo(0xB8000008, sectors); while(osPiGetStatus() != 0);
 
+    // write "read sectors to ram" command
+    osPiWriteIo(0xB8000208, 3); while(osPiGetStatus() != 0);
 
+    cfWaitCI();
+}
+
+int cfOptimizeCycleTime()
+{
+    int cycletime = 40;
+
+    // first sector MUST already be loaded into buffer
+
+    // the algorithm is as follow:
+    // first the cycletime is high, for slow access.
+    // repeatedly set the cycletime smaller (for faster)
+    // stop once the data doesn't match what you got for the first read.
+
+    while(1)
+    {
+        cfReadSector(fat_buffer, 0);
+
+        if(memcmp(fat_buffer, buffer, 512) != 0)
+        {
+            // newly read buffer differs from original! must be corrupted, slow back down
+            cycletime += 5;
+            cfSetCycleTime(cycletime);
+            return cycletime;
+        }
+        // otherwise trim it down a bit
+        cycletime -= 5;
+
+        if(cycletime <= 5)
+        {
+            // never let it go below 5
+            cfSetCycleTime(5);
+            return 5;
+        }
+    }
+}
+
+void cfSetCycleTime(int cycletime)
+{
+    cfWaitCI();
+
+    // write cycletime to the fpga register
+    osPiWriteIo(0xB8000000, cycletime); while(osPiGetStatus() != 0);
+    // write "read sector" command
+    osPiWriteIo(0xB8000208, 0xfd); while(osPiGetStatus() != 0);
+
+    cfWaitCI();
+}
 
 void cfReadSector(unsigned char *buffer, uint32_t lba)
 {
-    char buf[8];
-    long timeout = 0;
-
-    // first poll the status register until it's good
-    do{
-        osPiReadIo(0xB8000200, buf); while(osPiGetStatus() != 0);
-        timeout++;
-        if(timeout == 60000000){
-            sprintf(message1, "timed out. (readsector1)");
-            return;
-        }
-    }while((buf[0] | buf[1] | buf[2] | buf[3]) != 0);
+    cfWaitCI();
 
     // write LBA to the fpga register
     osPiWriteIo(0xB8000000, lba); while(osPiGetStatus() != 0);
     // write "read sector" command
     osPiWriteIo(0xB8000208, 1); while(osPiGetStatus() != 0);
 
-    // poll the status register until it's good
-    do{
-        osPiReadIo(0xB8000200, buf); while(osPiGetStatus() != 0);
-        timeout++;
-        if(timeout == 60000000){
-            sprintf(message1, "timed out. (readsector2)");
-            return;
-        }
-    }while((buf[0] | buf[1] | buf[2] | buf[3]) != 0);
+    cfWaitCI();
 
     // DANGER WILL ROBINSON
     // We are DMAing... if we don't write back all cached data, WE'RE FUCKED
