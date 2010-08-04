@@ -47,10 +47,6 @@ uint32_t fat_num_resv_sect;
 uint32_t fat_num_fats;
 uint32_t fat_sect_per_fat;
 
-// can be localized to fatLoadTable
-uint32_t dir_num_files;
-char fat_volumeid[12];
-
 int             compat_mode = 0;
 
 void loadRomToRam(uint32_t ramaddr, uint32_t clus);
