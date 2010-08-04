@@ -1,4 +1,4 @@
-#ifdef DEBUG
+#ifdef LINUX
 
 #include <err.h>
 #include <stdio.h>
@@ -68,7 +68,7 @@ int fat_root_dirent(fat_dirent *dirent);
 unsigned short shortEndian(unsigned char *i)
 {
 // assume little endian system for debug
-#ifdef DEBUG
+#ifdef LINUX
     return *(unsigned short *)i;
 #else
 
@@ -81,7 +81,7 @@ unsigned short shortEndian(unsigned char *i)
 // 4-byte number
 unsigned int intEndian(unsigned char *i)
 {
-#ifdef DEBUG
+#ifdef LINUX
     return *(uint32_t *)i;
 #else
     uint32_t t = ((int)*(i+3)<<24) |
@@ -110,7 +110,7 @@ int fatInit()
         return 1;
     }
 
-#ifndef DEBUG
+#ifndef LINUX
     // now speed things up!
     if(compat_mode)
     {
@@ -342,7 +342,7 @@ end_of_dir: // end of directory reached
     return 0;
 }
 
-#ifdef DEBUG
+#ifdef LINUX
 #define osPiReadIo(X,Y) do { } while (0)
 #define osPiGetStatus() 0
 #endif
@@ -355,7 +355,7 @@ void sectors_to_ram(uint32_t ram, uint32_t start_sector, uint32_t count_sectors)
         start_sector,
         count_sectors
     );
-#ifdef DEBUG
+#ifdef LINUX
     printf("%s\n", message1);
 #endif
 }
@@ -452,7 +452,7 @@ int fatLoadTable()
 
 
 
-#ifdef DEBUG // local test version of CF read/write
+#ifdef LINUX // local test version of CF read/write
 
 void cfSectorToRam(uint32_t ramaddr, uint32_t lba) {
 }
@@ -602,7 +602,7 @@ void cfReadSector(unsigned char *buffer, uint32_t lba)
 
 #endif
 
-#ifdef DEBUG
+#ifdef LINUX
 
 int main(int argc, char **argv) {
     int ret;
