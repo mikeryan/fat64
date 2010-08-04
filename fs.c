@@ -33,19 +33,16 @@ char message1[BUFSIZ];
 unsigned char fat_buffer[512];
 unsigned long fat_buffer_sector = -1;
 
+uint32_t fs_begin_sector;
 
-uint32_t fat_begin_lba;
-uint32_t fat_sect_per_clus;
-uint32_t fat_root_dir_first_clus;
-uint32_t fat_clus_begin_lba;
-uint32_t rom_size;
+typedef struct _fat_fs_t {
+    uint32_t begin_sector;
+    uint32_t sect_per_clus;
+    uint32_t root_cluster;
+    uint32_t clus_begin_sector;
+} fat_fs_t;
 
-// can be localized to fatInit
-uint32_t fat_part_begin_lba;
-char fat_systemid[8];
-uint32_t fat_num_resv_sect;
-uint32_t fat_num_fats;
-uint32_t fat_sect_per_fat;
+fat_fs_t fat_fs;
 
 int             compat_mode = 0;
 
@@ -98,6 +95,12 @@ unsigned int intEndian(unsigned char *i)
 
 int fatInit()
 {
+    // can be localized to fatInit
+    char fat_systemid[8];
+    uint32_t fat_num_resv_sect;
+    uint32_t fat_num_fats;
+    uint32_t fat_sect_per_fat;
+
     // read first sector
     cfReadSector(buffer, 0);
 
@@ -121,13 +124,13 @@ int fatInit()
     if(strncmp((char *)&buffer[82], "FAT", 3) == 0)
     {
         // this first sector is a Volume Boot Record
-        fat_part_begin_lba = 0;
+        fs_begin_sector = 0;
     }else{
         // this is a MBR. Read first entry from partition table
-        fat_part_begin_lba = intEndian(&buffer[0x1c6]);
+        fs_begin_sector = intEndian(&buffer[0x1c6]);
     }
 
-    cfReadSector(buffer, fat_part_begin_lba);
+    cfReadSector(buffer, fs_begin_sector);
 
     // copy the system ID string
     memcpy(fat_systemid, &buffer[82], 8);
@@ -139,19 +142,18 @@ int fatInit()
         return 1;
     }
 
-    fat_sect_per_clus = buffer[0x0d];
+    fat_fs.sect_per_clus = buffer[0x0d];
     fat_num_resv_sect = shortEndian(&buffer[0x0e]);
     fat_num_fats = buffer[0x10];
     fat_sect_per_fat = intEndian(&buffer[0x24]);
-    fat_root_dir_first_clus = intEndian(&buffer[0x2c]);
+    fat_fs.root_cluster = intEndian(&buffer[0x2c]);
 
-    fat_begin_lba = fat_part_begin_lba + fat_num_resv_sect;
-    fat_clus_begin_lba = fat_begin_lba + (fat_num_fats * fat_sect_per_fat);
+    fat_fs.begin_sector = fs_begin_sector + fat_num_resv_sect;
+    fat_fs.clus_begin_sector = fat_fs.begin_sector + (fat_num_fats * fat_sect_per_fat);
 
     sprintf(message1, "Loaded successfully.");
 
     return 0;
-    //sprintf(message1, "%s, %u, %u, %u, %u, %u, %u", fat_systemid, fat_part_begin_lba, fat_sect_per_clus, fat_num_resv_sect, fat_num_fats, fat_sect_per_fat, fat_root_dir_first_clus);
 }
 
 /**
@@ -161,7 +163,7 @@ void fat_sector_offset(uint32_t cluster, uint32_t *fat_sector, uint32_t *fat_off
     uint32_t index = cluster * 4;   // each cluster is 4 bytes long
     uint32_t sector = index / 512;  // 512 bytes per sector, rounds down
 
-    *fat_sector = fat_begin_lba + sector;
+    *fat_sector = fat_fs.begin_sector + sector;
     *fat_offset = index - sector * 512;
 }
 
@@ -196,15 +198,15 @@ int fat_root_dirent(fat_dirent *dirent) {
     dirent->size = 0;
 
     dirent->index = 0;
-    dirent->cluster = fat_root_dir_first_clus;
+    dirent->cluster = fat_fs.root_cluster;
     dirent->sector = 0;
-    dirent->first_cluster = fat_root_dir_first_clus;
+    dirent->first_cluster = fat_fs.root_cluster;
 
     return 0;
 }
 
 // first sector of a cluster
-#define CLUSTER_TO_SECTOR(X) ( fat_clus_begin_lba + (X - 2) * fat_sect_per_clus )
+#define CLUSTER_TO_SECTOR(X) ( fat_fs.clus_begin_sector + (X - 2) * fat_fs.sect_per_clus )
 
 /**
  * Read a directory.
@@ -238,7 +240,7 @@ int fat_readdir(fat_dirent *dirent) {
             ++dirent->sector;
 
             // load the next cluster once we reach the end of this
-            if (dirent->sector == fat_sect_per_clus) {
+            if (dirent->sector == fat_fs.sect_per_clus) {
                 // look up the cluster number in the FAT
                 fat_entry = fat_get_fat(dirent->cluster);
                 if (fat_entry >= 0x0ffffff8) // last cluster
@@ -380,10 +382,10 @@ void loadRomToRam(uint32_t ramaddr, uint32_t clus)
         {
             start_sector = CLUSTER_TO_SECTOR(start_cluster);
             clusters = current_cluster - start_cluster + 1;
-            cfSectorsToRam(ram, start_sector, clusters * fat_sect_per_clus);
+            cfSectorsToRam(ram, start_sector, clusters * fat_fs.sect_per_clus);
 
             start_cluster = next_cluster;
-            ram += clusters * fat_sect_per_clus * 512 / 2;
+            ram += clusters * fat_fs.sect_per_clus * 512 / 2;
         }
 
         current_cluster = next_cluster;
