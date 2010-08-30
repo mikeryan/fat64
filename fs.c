@@ -232,7 +232,8 @@ int fat_readdir(fat_dirent *dirent) {
         return -1;
     }
 
-    dirent->long_name[0] = 0;
+    if (dirent->long_name)
+        memset(dirent->long_name, 0, 256);
 
     do {
         if (dirent->index == 512/32) {
