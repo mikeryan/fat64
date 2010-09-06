@@ -205,6 +205,14 @@ int fat_root_dirent(fat_dirent *dirent) {
     return 0;
 }
 
+/*
+ * Returns a dirent for the directory starting at start_cluster.
+ */
+void fat_sub_dirent(uint32_t start_cluster, fat_dirent *de) {
+    fat_root_dirent(de);
+    de->cluster = de->first_cluster = start_cluster;
+}
+
 // first sector of a cluster
 #define CLUSTER_TO_SECTOR(X) ( fat_fs.clus_begin_sector + (X - 2) * fat_fs.sect_per_clus )
 
