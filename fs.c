@@ -1,5 +1,6 @@
 #ifdef LINUX
 
+#include <ctype.h>
 #include <err.h>
 #include <stdio.h>
 #include <string.h>
@@ -351,6 +352,107 @@ end_of_dir: // end of directory reached
     return 0;
 }
 
+// print a buffer along with a hexdump
+static void printbuf(unsigned char *buf, int len) {
+    int i;
+
+    printf("'");
+    for (i = 0; i < len; ++i)
+        printf("%c", isprint(buf[i]) ? buf[i] : '.');
+    printf("'  ");
+    for (i = 0; i < len; ++i)
+        printf("%02x ", buf[i]);
+    printf("\n");
+}
+
+/**
+ * dump a FAT directory to stdout
+ */
+void fat_debug_readdir(uint32_t start_cluster) {
+    uint32_t cluster = start_cluster;
+
+    /*
+     * while true:
+     *     if cluster = last:
+     *         return
+     *     load cluster
+     *     display entries
+     *     get next cluster from fat
+     */
+
+    while (1) {
+        int index = 0;
+        int sector_index = 0;
+
+        printf("Cluster %08x\n", cluster);
+
+        if (cluster >= 0x0ffffff8) {
+            printf("final cluster, done\n");
+            return;
+        }
+
+        // display the contents of one cluster (may span multiple sectors)
+        for (sector_index = 0; sector_index < fat_fs.sect_per_clus; ++sector_index) {
+            // load the next sector
+            uint32_t sector = CLUSTER_TO_SECTOR(cluster) + sector_index;
+            cfReadSector(buffer, sector);
+
+            for (index = 0; index < 512; index += 32) {
+                if (buffer[index] == 0) {
+                    printf("end of dir marker, done\n");
+                    return;
+                }
+
+                int attributes = buffer[index + 11];
+                printf("    %-30s %02x (%s filename)\n", "attributes:", attributes, attributes == 0x0f ? "long" : "short");
+
+                // LFN entry
+                if (attributes == 0x0f) {
+                    int i, segment;
+                    unsigned char buf[13], checksum;
+
+                    segment = (buffer[index] & 0x1F) - 1;
+                    printf("    %-30s %d%s\n", "segment: ", segment, (segment < 0 || segment > 19) ? " (invalid)" : "");
+
+                    // copy the bytes of the name
+                    for (i = 0; i < 5; ++i)
+                        buf[i] = buffer[index + 1 + i * 2];
+                    for (i = 0; i < 6; ++i)
+                        buf[5+i] = buffer[index + 0xe + i * 2];
+                    for (i = 0; i < 2; ++i)
+                        buf[11+i] = buffer[index + 0x1c + i * 2];
+
+                    printf("    %-30s ", "bytes:");
+                    printbuf(buf, 13);
+
+                    // other info
+                    checksum = buffer[index + 13];
+                    printf("    %-30s %02x\n", "checksum:", checksum);
+                }
+
+                else {
+                    int i;
+                    unsigned char sum = 0;
+
+                    printf("    %-30s ", "name:");
+                    printbuf(buffer + index, 8);
+
+                    printf("    %-30s ", "extension:");
+                    printbuf(buffer + index + 8, 3);
+
+                    for (i = 0; i < 11; ++i)
+                        sum = (((sum & 1) << 7) | ((sum & 0xfe) >> 1)) + buffer[index + i];
+                    printf("    %-30s %02x\n", "checksum (calculated):", sum);
+                }
+
+                printf("    ----\n");
+            }
+        }
+
+        cluster = fat_get_fat(cluster);
+    }
+}
+
 #ifdef LINUX
 #define osPiReadIo(X,Y) do { } while (0)
 #define osPiGetStatus() 0
@@ -427,7 +529,6 @@ int fatLoadTable()
 
         if (strcmp(de.short_name, "MENU.BIN") == 0)     break;
     }while (ret > 0);
-
 
     // either we reached EOD or there was an error
     if (ret <= 0) {
@@ -628,6 +729,9 @@ int main(int argc, char **argv) {
     ret = fatInit();
     if (ret != 0)
         errx(1, "%s", message1);
+
+    fat_debug_readdir(fat_fs.root_cluster);
+    return 0;
 
     ret = fatLoadTable();
     if (ret != 0)
