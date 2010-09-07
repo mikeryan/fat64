@@ -453,6 +453,32 @@ void fat_debug_readdir(uint32_t start_cluster) {
     }
 }
 
+/**
+ * Get an array of all the sectors a file owns.
+ * Return 0 on succes, -1 on fail
+ * Only failure mode is if the size of the sectors array is too small.
+ */
+int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size) {
+    int i, num = 0;
+    uint32_t cluster, sector;
+
+    cluster = start_cluster;
+
+    while (cluster < 0x0ffffff8) {
+        sector = CLUSTER_TO_SECTOR(cluster);
+        for (i = 0; i < fat_fs.sect_per_clus; ++i) {
+            // make sure we have enough space for the sectors
+            if (num >= size)
+                return -1;
+
+            sectors[num++] = sector + i;
+        }
+        cluster = fat_get_fat(cluster);
+    }
+
+    return 0;
+}
+
 #ifdef LINUX
 #define osPiReadIo(X,Y) do { } while (0)
 #define osPiGetStatus() 0
@@ -715,7 +741,8 @@ void cfReadSector(unsigned char *buffer, uint32_t lba)
 #ifdef LINUX
 
 int main(int argc, char **argv) {
-    int ret;
+    int ret, i;
+    uint32_t sectors[10];
 
     if (argc < 2) {
         printf("Usage: %s <file_system.img>\n", argv[0]);
@@ -730,8 +757,10 @@ int main(int argc, char **argv) {
     if (ret != 0)
         errx(1, "%s", message1);
 
+    /*
     fat_debug_readdir(fat_fs.root_cluster);
     return 0;
+    */
 
     ret = fatLoadTable();
     if (ret != 0)
@@ -741,6 +770,9 @@ int main(int argc, char **argv) {
     fat_root_dirent(&de);
 
     while ((ret = fat_readdir(&de)) > 0)
+        if (strcmp(de.long_name, "menu.bin") == 0)
+            fat_get_sectors(de.start_cluster, sectors, 10);
+
         printf(
             "%-12s (%c) %5d %s\n",
             de.short_name, de.directory ? 'd' : 'f',
@@ -750,6 +782,11 @@ int main(int argc, char **argv) {
 
     if (ret < 0)
         errx(1, "%s", message1);
+ 
+    printf("sectors for menu.bin: ");
+    for (i = 0; i < 10; ++i)
+        printf("%d ", sectors[i]);
+    printf("\n");
 
     return 0;
 }
