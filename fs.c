@@ -479,6 +479,26 @@ int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size) {
     return 0;
 }
 
+/**
+ * Find a file by name in a directory. Create it if it doesn't exist.
+ * Returns:
+ *   0 on success
+ *   -1 on fail (if the file does not exist)
+ *
+ * TODO: create file when it does not exist
+ */
+int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
+    int ret;
+
+    while ((ret = fat_readdir(folder)) > 0)
+        if (strcmp(filename, folder->long_name) == 0) {
+            *result_de = *folder;
+            return 0;
+        }
+
+    return -1;
+}
+
 #ifdef LINUX
 #define osPiReadIo(X,Y) do { } while (0)
 #define osPiGetStatus() 0
@@ -740,6 +760,17 @@ void cfReadSector(unsigned char *buffer, uint32_t lba)
 
 #ifdef LINUX
 
+void test_find_create(void) {
+    int ret;
+    fat_dirent dir, result;
+
+    fat_root_dirent(&dir);
+    ret = fat_find_create("menu.bin", &dir, &result);
+
+    if (ret == 0)
+        printf("result: size %u, start %u\n", result.size, result.start_cluster);
+}
+
 int main(int argc, char **argv) {
     int ret, i;
     uint32_t sectors[10];
@@ -756,6 +787,8 @@ int main(int argc, char **argv) {
     ret = fatInit();
     if (ret != 0)
         errx(1, "%s", message1);
+
+    test_find_create();
 
     /*
     fat_debug_readdir(fat_fs.root_cluster);
