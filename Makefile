@@ -1,4 +1,4 @@
-CFLAGS = -DLINUX -g -Wall -Werror
+CFLAGS = -DLINUX -g -Wall -Werror -lm
 
 all: fs
 

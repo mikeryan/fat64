@@ -2,16 +2,20 @@
 
 #include <ctype.h>
 #include <err.h>
+#include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 typedef unsigned int uint32_t;
+typedef unsigned short uint16_t;
 
 // the disk image
 FILE *cf_file;
 
 typedef struct _fat_dirent {
     // file properties
+    char *name;
     char short_name[13];
     char long_name[256];
     int directory;
@@ -33,6 +37,7 @@ char message1[BUFSIZ];
 
 unsigned char fat_buffer[512];
 unsigned long fat_buffer_sector = -1;
+int fat_buffer_dirty = 0;
 
 uint32_t fs_begin_sector;
 
@@ -52,6 +57,7 @@ void loadRomToRam(uint32_t ramaddr, uint32_t clus);
 void cfSectorToRam(uint32_t ramaddr, uint32_t lba);
 void cfSectorsToRam(uint32_t ramaddr, uint32_t lba, int sectors);
 void cfReadSector(unsigned char *buffer, uint32_t lba);
+void cfWriteSector(unsigned char *buffer, uint32_t lba);
 
 void cfSetCycleTime(int cycletime);
 int cfOptimizeCycleTime();
@@ -60,7 +66,10 @@ void fat_sector_offset(uint32_t cluster, uint32_t *fat_sector, uint32_t *fat_off
 uint32_t fat_get_fat(uint32_t cluster);
 
 uint32_t intEndian(unsigned char *i);
+void writeInt(unsigned char *dest, uint32_t val);
 unsigned short shortEndian(unsigned char *i);
+void writeShort(unsigned char *dest, uint16_t val);
+
 int fat_root_dirent(fat_dirent *dirent);
 
 #endif
@@ -79,6 +88,10 @@ unsigned short shortEndian(unsigned char *i)
 #endif
 }
 
+void writeShort(unsigned char *dest, uint16_t val) {
+    *(uint16_t *)dest = shortEndian((unsigned char *)&val);
+}
+
 // 4-byte number
 unsigned int intEndian(unsigned char *i)
 {
@@ -92,6 +105,10 @@ unsigned int intEndian(unsigned char *i)
 
     return t;
 #endif
+}
+
+void writeInt(unsigned char *dest, uint32_t val) {
+    *(uint32_t *)dest = intEndian((unsigned char *)&val);
 }
 
 int fatInit()
@@ -169,9 +186,9 @@ void fat_sector_offset(uint32_t cluster, uint32_t *fat_sector, uint32_t *fat_off
 }
 
 /**
- * Get the FAT entry for a given cluster.
+ * Load the sector for a FAT cluster, return offset into sector.
  */
-uint32_t fat_get_fat(uint32_t cluster) {
+uint32_t _fat_load_fat(uint32_t cluster) {
     uint32_t sector;
     uint32_t offset;
 
@@ -179,13 +196,45 @@ uint32_t fat_get_fat(uint32_t cluster) {
     fat_sector_offset(cluster, &sector, &offset);
 
     // only read sector if it has changed! saves time
-    if(sector != fat_buffer_sector){
+    if (sector != fat_buffer_sector) {
+        // write a dirty sector
+        if (fat_buffer_dirty) {
+            cfWriteSector(fat_buffer, fat_buffer_sector);
+            fat_buffer_dirty = 0;
+        }
+
         // read the sector
         cfReadSector(fat_buffer, sector);
         fat_buffer_sector = sector;
     }
 
+    return offset;
+}
+
+// flush changes to the fat
+static void _fat_flush_fat(void) {
+    if (fat_buffer_dirty)
+        cfWriteSector(fat_buffer, fat_buffer_sector);
+    fat_buffer_dirty = 0;
+}
+
+
+/**
+ * Get the FAT entry for a given cluster.
+ */
+uint32_t fat_get_fat(uint32_t cluster) {
+    uint32_t offset = _fat_load_fat(cluster);
     return intEndian(&fat_buffer[offset]);
+}
+
+/**
+ * Set the FAT entry for a given cluster.
+ */
+void fat_set_fat(uint32_t cluster, uint32_t value) {
+    uint32_t offset = _fat_load_fat(cluster);
+    writeInt(&fat_buffer[offset], value);
+
+    fat_buffer_dirty = 1;
 }
 
 /**
@@ -341,6 +390,11 @@ int fat_readdir(fat_dirent *dirent) {
     }
     while (!found_file);
 
+    if (dirent->long_name[0] != '\0')
+        dirent->name = dirent->long_name;
+    else
+        dirent->name = dirent->short_name;
+
     return 1;
 
 end_of_dir: // end of directory reached
@@ -491,12 +545,142 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
     int ret;
 
     while ((ret = fat_readdir(folder)) > 0)
-        if (strcmp(filename, folder->long_name) == 0) {
+        if (strcmp(filename, folder->name) == 0) {
             *result_de = *folder;
             return 0;
         }
 
     return -1;
+}
+
+/**
+ * Find the first unused entry in the FAT.
+ */
+static uint32_t _fat_find_free_entry(int start) {
+    uint32_t entry = 1;
+
+    if (start > 0)
+        entry = start;
+
+    while (fat_get_fat(entry) != 0)
+        ++entry;
+
+    return entry;
+}
+
+/**
+ * Write a dirent back to disk.
+ */
+static void _fat_write_dirent(fat_dirent *de) {
+    uint32_t sector = CLUSTER_TO_SECTOR(de->cluster) + de->sector;
+    uint32_t offset = (de->index - 1) * 32;
+    uint16_t top16, bottom16;
+
+    cfReadSector(buffer, sector);
+
+    // size
+    writeInt(&buffer[offset + 0x1c], de->size);
+
+    // start cluster
+    top16 = (de->start_cluster >> 16 & 0xffff);
+    writeShort(&buffer[offset + 0x14], top16);
+
+    bottom16 = (de->start_cluster & 0xffff);
+    writeShort(&buffer[offset + 0x1a], bottom16);
+
+    cfWriteSector(buffer, sector);
+}
+
+/**
+ * Sets file size, adding and removing clusters as necessary.
+ * Returns:
+ *  0 on success
+ *  no known failure mode
+ */
+int fat_set_size(fat_dirent *de, uint32_t size) {
+    uint32_t bytes_per_clus = fat_fs.sect_per_clus * 512;
+    uint32_t current_clusters, new_clusters;
+
+    // true NOP, no change in size whatsoever
+    if (de->size == size)
+        return 0;
+
+    current_clusters = ceil(1.0 * de->size / bytes_per_clus);
+    new_clusters = ceil(1.0 * size / bytes_per_clus);
+
+    // expand file
+    if (new_clusters > current_clusters) {
+        uint32_t count = 0;
+        uint32_t current = de->start_cluster;
+
+        // if the file's empty it will have no clusters, so create the first
+        if (current == 0) {
+            current = _fat_find_free_entry(0);
+            fat_set_fat(current, 0xfffffff8);
+            de->start_cluster = current;
+            ++count;
+        }
+
+        // otherwise skip to last entry
+        else {
+            uint32_t prev = current;
+            while ((current = fat_get_fat(current)) < 0x0ffffff8) {
+                ++count;
+                prev = current;
+            }
+            current = prev;
+        }
+
+        // add new clusters
+        while (count < new_clusters) {
+            uint32_t new_cluster = _fat_find_free_entry(current);
+            fat_set_fat(current, new_cluster);
+            current = new_cluster;
+            ++count;
+        }
+
+        // terminate the file
+        fat_set_fat(current, 0x0fffffff8);
+    }
+
+    // remove sectors
+    else if (new_clusters < current_clusters) {
+        uint32_t count;
+        uint32_t current = de->start_cluster;
+        uint32_t prev = current;
+
+        // skip to the first entry past the new last FAT entry
+        for (count = 0; count < new_clusters; ++count) {
+            prev = current;
+            current = fat_get_fat(current);
+        }
+
+        // if the file's not empty, set the last FAT entry to END
+        if (count > 0)
+            fat_set_fat(prev, 0x0ffffff8);
+        else
+            de->start_cluster = 0;
+
+        // zero the rest of the FAT entries
+        do {
+            uint32_t next = fat_get_fat(current);
+            fat_set_fat(current, 0);
+            current = next;
+        } while (current < 0x0ffffff6 && current > 0);
+    }
+
+    else // (new_clusters == current_clusters), NOP but still need to update dirent
+        ;
+
+    // update size in dirent
+    de->size = size;
+
+    // write it back to disk
+    _fat_write_dirent(de);
+
+    _fat_flush_fat();
+
+    return 0;
 }
 
 #ifdef LINUX
@@ -637,6 +821,24 @@ error:
     memset(buffer, 0xff, 512);
 }
 
+void cfWriteSector(unsigned char *buffer, uint32_t lba) {
+    printf("write to %08x\n", lba * 512);
+    int ret = fseek(cf_file, lba * 512, SEEK_SET);
+    if (ret < 0)
+        goto error;
+
+    size_t count = fwrite(buffer, 512, 1, cf_file);
+    if (count != 1)
+        goto error;
+
+    fflush(cf_file);
+
+    return;
+
+error:
+    abort();
+}
+
 #else // FPGA versions of CF read/write
 
 void cfWaitCI()
@@ -771,6 +973,32 @@ void test_find_create(void) {
         printf("result: size %u, start %u\n", result.size, result.start_cluster);
 }
 
+void test_set_size(void) {
+    int ret;
+    fat_dirent dir, result;
+
+    fat_root_dirent(&dir);
+    ret = fat_find_create("1", &dir, &result);
+
+    if (ret != 0)
+        abort();
+
+    fat_set_size(&dir, 10);
+    puts("size 10, hit enter");
+    getchar();
+
+    fat_set_size(&dir, 9876);
+    puts("size 9876, hit enter");
+    getchar();
+
+    fat_set_size(&dir, 5000);
+    puts("size 5000, hit enter");
+    getchar();
+
+    fat_set_size(&dir, 0);
+    puts("size 0");
+}
+
 int main(int argc, char **argv) {
     int ret, i;
     uint32_t sectors[10];
@@ -780,7 +1008,7 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    cf_file = fopen(argv[1], "r");
+    cf_file = fopen(argv[1], "r+");
     if (cf_file == NULL)
         err(1, "Couldn't open %s for reading", argv[1]);
 
@@ -789,6 +1017,11 @@ int main(int argc, char **argv) {
         errx(1, "%s", message1);
 
     test_find_create();
+
+    /*
+    puts("testing set_size");
+    test_set_size();
+    */
 
     /*
     fat_debug_readdir(fat_fs.root_cluster);
