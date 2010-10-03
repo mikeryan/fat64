@@ -238,6 +238,21 @@ void fat_set_fat(uint32_t cluster, uint32_t value) {
 }
 
 /**
+ * Find the first unused entry in the FAT.
+ */
+static uint32_t _fat_find_free_entry(int start) {
+    uint32_t entry = 1;
+
+    if (start > 0)
+        entry = start;
+
+    while (fat_get_fat(entry) != 0)
+        ++entry;
+
+    return entry;
+}
+
+/**
  * Get the root directory entry.
  */
 int fat_root_dirent(fat_dirent *dirent) {
@@ -533,6 +548,76 @@ int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size) {
 }
 
 /**
+ * Allocate a new cluster after the last cluster. Sets the end of file marker
+ * in the FAT as a bonus.
+ * 
+ * Returns the number of the new cluster.
+ */
+static uint32_t _fat_allocate_cluster(uint32_t last_cluster) {
+    uint32_t new_last = _fat_find_free_entry(last_cluster);
+    fat_set_fat(last_cluster, new_last);
+    fat_set_fat(new_last, 0x0ffffff8);
+    return new_last;
+}
+
+/**
+ * Fills a cluster with 0's.
+ */
+static void _fat_clear_cluster(uint32_t cluster) {
+    uint32_t i, sector = CLUSTER_TO_SECTOR(cluster);
+
+    for (i = 0; i < fat_fs.sect_per_clus; ++i) {
+        cfReadSector(buffer, sector + i);
+        memset(buffer, 0, 512);
+        cfWriteSector(buffer, sector + i);
+    }
+}
+
+/**
+ * Allocate a dirent at the end of a directory. If you call this on a dirent
+ * that is not end-of-dir (i.e., fat_readdir(de) != 0) you will lose data and
+ * corrupt the FS. Enjoy :)
+ *
+ * Returns a pointer to the start of the new dirent.
+ */
+static unsigned char *_fat_allocate_dirent(fat_dirent *dirent) {
+    uint32_t sector;
+
+    // end of directory coincides with end of a cluster, allocate a new cluster
+    if (dirent->sector == fat_fs.sect_per_clus) {
+        puts("end of cluster");
+        dirent->cluster = _fat_allocate_cluster(dirent->cluster);
+        dirent->sector = 0;
+        dirent->index = 0;
+
+        // don't want bogus data in the cluster
+        _fat_clear_cluster(dirent->cluster);
+    }
+
+    sector = CLUSTER_TO_SECTOR(dirent->cluster) + dirent->sector;
+    cfReadSector(buffer, sector);
+
+    return &buffer[dirent->index * 32];
+}
+
+/**
+ * Advance a dirent at the end of a directory. Does not attempt to load a new
+ * sector when dirent->sector == fat_fs.sect_per_clus since the FAT should
+ * always be 0x0fffffff8 (end of file). _fat_allocat_dirent will allocate a new
+ * cluster when that's the case.
+ *
+ * Whew, this too complicated.
+ */
+static void _fat_advance_dirent(fat_dirent *dirent) {
+    ++dirent->index;
+
+    if (dirent->index == 512/32) {
+        dirent->index = 0;
+        ++dirent->sector;
+    }
+}
+
+/**
  * Find a file by name in a directory. Create it if it doesn't exist.
  * Returns:
  *   0 on success
@@ -541,30 +626,73 @@ int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size) {
  * TODO: create file when it does not exist
  */
 int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
-    int ret;
+    int ret, segment, i;
+    size_t len;
+    char short_name[12];
+    char segment_chars[13];
+
+    //
+    // Try to find the file in the dir, return it if found
+    //
 
     while ((ret = fat_readdir(folder)) > 0)
-        if (strcmp(filename, folder->name) == 0) {
+        if (strcasecmp(filename, folder->name) == 0) {
+            // found, return it
             *result_de = *folder;
             return 0;
         }
 
+    //
+    // File not found. Create a new file
+    //
+
+    // short name is a random alphabetic string
+    for (i = 0; i < 11; ++i)
+        short_name[i] = 'A' + (rand() % ('Z' - 'A' + 1));
+    short_name[11] = 0; // for display purposes
+
+    // printf("Short name %s\n", short_name);
+
+    // trunc long name to 255 bytes
+    len = strlen(filename);
+    if (len > 255) {
+        filename[256] = '\0';
+        len = 255;
+    }
+
+    for (i = 0; i < 200; ++i) {
+        unsigned char *buf = _fat_allocate_dirent(folder);
+        buf[0] = 1;
+        cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
+        _fat_advance_dirent(folder);
+    }
+    fat_rewind(folder);
+
+    fat_debug_readdir(folder->cluster);
+
+    if (1)
+        return 0;
+
+    // copy it 13 bytes at a time
+    for (segment = len / 13; segment >= 0; --segment) {
+        strncpy(segment_chars, &filename[segment * 13], 13);
+        unsigned char *buf = _fat_allocate_dirent(folder);
+        buf[0] = 1;
+        cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
+
+        printf("Segment %d:\n", segment);
+        printf("    ");
+        printbuf((unsigned char *)segment_chars, 13);
+
+
+        _fat_advance_dirent(folder);
+    }
+
+    fat_rewind(folder);
+
+    fat_debug_readdir(folder->cluster);
+
     return -1;
-}
-
-/**
- * Find the first unused entry in the FAT.
- */
-static uint32_t _fat_find_free_entry(int start) {
-    uint32_t entry = 1;
-
-    if (start > 0)
-        entry = start;
-
-    while (fat_get_fat(entry) != 0)
-        ++entry;
-
-    return entry;
 }
 
 /**
@@ -966,7 +1094,7 @@ void test_find_create(void) {
     fat_dirent dir, result;
 
     fat_root_dirent(&dir);
-    ret = fat_find_create("menu.bin", &dir, &result);
+    ret = fat_find_create("lasjdlkjaslkdjlkjlkjksjdsdmenu.bin", &dir, &result);
 
     if (ret == 0)
         printf("result: size %u, start %u\n", result.size, result.start_cluster);
