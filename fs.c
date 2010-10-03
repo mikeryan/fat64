@@ -303,7 +303,7 @@ int fat_readdir(fat_dirent *dirent) {
                 // look up the cluster number in the FAT
                 fat_entry = fat_get_fat(dirent->cluster);
                 if (fat_entry >= 0x0ffffff8) // last cluster
-                    goto end_of_dir;
+                    return 0; // end of dir
 
                 dirent->cluster = fat_entry;
                 dirent->sector = 0;
@@ -317,7 +317,7 @@ int fat_readdir(fat_dirent *dirent) {
 
         // end of directory reached
         if (buffer[offset] == 0)
-            goto end_of_dir;
+            return 0;
 
         ++dirent->index;
 
@@ -396,14 +396,13 @@ int fat_readdir(fat_dirent *dirent) {
         dirent->name = dirent->short_name;
 
     return 1;
+}
 
-end_of_dir: // end of directory reached
+void fat_rewind(fat_dirent *dirent) {
     // reset the metadata to point to the beginning of the dir
     dirent->index = 0;
     dirent->cluster = dirent->first_cluster;
     dirent->sector = 0;
-
-    return 0;
 }
 
 // print a buffer along with a hexdump
