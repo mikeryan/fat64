@@ -281,6 +281,12 @@ void fat_sub_dirent(uint32_t start_cluster, fat_dirent *de) {
 // first sector of a cluster
 #define CLUSTER_TO_SECTOR(X) ( fat_fs.clus_begin_sector + (X - 2) * fat_fs.sect_per_clus )
 
+// dirents per sector
+#define DE_PER_SECTOR (512 / 32)
+
+#define FAT_SUCCESS 0
+#define FAT_NOSPACE 1
+
 /**
  * Read a directory.
  * returns:
@@ -300,7 +306,7 @@ int fat_readdir(fat_dirent *dirent) {
 
     char *dest;
 
-    if (dirent->index > 512 / 32) {
+    if (dirent->index > DE_PER_SECTOR) {
         sprintf(message1, "Invalid directory");
         return -1;
     }
@@ -309,7 +315,7 @@ int fat_readdir(fat_dirent *dirent) {
         memset(dirent->long_name, 0, 256);
 
     do {
-        if (dirent->index == 512/32) {
+        if (dirent->index == DE_PER_SECTOR) {
             dirent->index = 0;
             ++dirent->sector;
 
@@ -564,40 +570,47 @@ static uint32_t _fat_allocate_cluster(uint32_t last_cluster) {
  * Fills a cluster with 0's.
  */
 static void _fat_clear_cluster(uint32_t cluster) {
+    unsigned char clear_buffer[512] = { 0, };
     uint32_t i, sector = CLUSTER_TO_SECTOR(cluster);
 
-    for (i = 0; i < fat_fs.sect_per_clus; ++i) {
-        cfReadSector(buffer, sector + i);
-        memset(buffer, 0, 512);
-        cfWriteSector(buffer, sector + i);
-    }
+    for (i = 0; i < fat_fs.sect_per_clus; ++i)
+        cfWriteSector(clear_buffer, sector + i);
 }
 
 /**
- * Allocate a dirent at the end of a directory. If you call this on a dirent
- * that is not end-of-dir (i.e., fat_readdir(de) != 0) you will lose data and
- * corrupt the FS. Enjoy :)
- *
- * Returns a pointer to the start of the new dirent.
+ * Calculate remaining dirents in a directory at EOD.
+ * If the dirent isn't EOD, this value is bogus.
  */
-static unsigned char *_fat_allocate_dirent(fat_dirent *dirent) {
-    uint32_t sector;
+static int _fat_remaining_dirents(fat_dirent *dirent) {
+    int remaining;
 
-    // end of directory coincides with end of a cluster, allocate a new cluster
-    if (dirent->sector == fat_fs.sect_per_clus) {
-        puts("end of cluster");
-        dirent->cluster = _fat_allocate_cluster(dirent->cluster);
-        dirent->sector = 0;
-        dirent->index = 0;
+    // DE_PER_SECTOR for each unused sector in the cluster
+    remaining = DE_PER_SECTOR * fat_fs.sect_per_clus - dirent->sector;
 
-        // don't want bogus data in the cluster
-        _fat_clear_cluster(dirent->cluster);
+    // remaining in the current sector
+    remaining += DE_PER_SECTOR - dirent->index;
+
+    return remaining;
+}
+
+/**
+ * Allocate a bunch of dirents.
+ * Return:
+ *  FAT_SUCCESS     success
+ *  FAT_NOSPACE     file system full
+ */
+static int _fat_allocate_dirents(fat_dirent *dirent, int count) {
+    int remaining;
+    uint32_t cluster;
+
+    remaining = _fat_remaining_dirents(dirent);
+    if (count > remaining) {
+        // TODO: check for file system full
+        cluster = _fat_allocate_cluster(dirent->cluster);
+        _fat_clear_cluster(cluster);
     }
 
-    sector = CLUSTER_TO_SECTOR(dirent->cluster) + dirent->sector;
-    cfReadSector(buffer, sector);
-
-    return &buffer[dirent->index * 32];
+    return FAT_SUCCESS;
 }
 
 /**
@@ -611,7 +624,7 @@ static unsigned char *_fat_allocate_dirent(fat_dirent *dirent) {
 static void _fat_advance_dirent(fat_dirent *dirent) {
     ++dirent->index;
 
-    if (dirent->index == 512/32) {
+    if (dirent->index == DE_PER_SECTOR) {
         dirent->index = 0;
         ++dirent->sector;
     }
@@ -626,10 +639,11 @@ static void _fat_advance_dirent(fat_dirent *dirent) {
  * TODO: create file when it does not exist
  */
 int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
-    int ret, segment, i;
+    int ret, segment, i, num_dirents;
     size_t len;
     char short_name[12];
     char segment_chars[13];
+    unsigned char crc, *buf;
 
     //
     // Try to find the file in the dir, return it if found
@@ -653,6 +667,11 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
 
     // printf("Short name %s\n", short_name);
 
+    // calc the CRC
+    crc = 0;
+    for (i = 0; i < 11; ++i)
+        crc = ((crc<<7) | (crc>>1)) + short_name[i];
+
     // trunc long name to 255 bytes
     len = strlen(filename);
     if (len > 255) {
@@ -660,39 +679,36 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
         len = 255;
     }
 
-    for (i = 0; i < 200; ++i) {
-        unsigned char *buf = _fat_allocate_dirent(folder);
-        buf[0] = 1;
-        cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
-        _fat_advance_dirent(folder);
-    }
-    fat_rewind(folder);
+    num_dirents  = 1; // short filename
+    num_dirents += (len - 1) / 13 + 1; // long filename
+    printf("Want to allocate %d dirents\n", num_dirents);
 
-    fat_debug_readdir(folder->cluster);
-
-    if (1)
-        return 0;
+    if (0) // FIXME
+    ret = _fat_allocate_dirents(folder, num_dirents);
+    ret = FAT_SUCCESS;
+    if (ret == FAT_NOSPACE)
+        return ret;
 
     // copy it 13 bytes at a time
     for (segment = len / 13; segment >= 0; --segment) {
         strncpy(segment_chars, &filename[segment * 13], 13);
-        unsigned char *buf = _fat_allocate_dirent(folder);
-        buf[0] = 1;
-        cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
+        buf = &buffer[folder->index * 32];
+        // buf[0] = 1;
+        // cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
 
         printf("Segment %d:\n", segment);
         printf("    ");
         printbuf((unsigned char *)segment_chars, 13);
 
-
+        if (0) // FIXME
         _fat_advance_dirent(folder);
     }
 
     fat_rewind(folder);
 
-    fat_debug_readdir(folder->cluster);
+    // fat_debug_readdir(folder->cluster);
 
-    return -1;
+    return 0;
 }
 
 /**
