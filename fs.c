@@ -30,8 +30,6 @@ typedef struct _fat_dirent {
     uint32_t first_cluster;
 } fat_dirent;
 
-uint32_t current_lba = -1;
-
 unsigned char buffer[512];
 char message1[BUFSIZ];
 
@@ -48,6 +46,7 @@ typedef struct _fat_fs_t {
     uint32_t sect_per_fat;
     uint32_t root_cluster;
     uint32_t clus_begin_sector;
+    uint32_t free_clusters;
 } fat_fs_t;
 
 fat_fs_t fat_fs;
@@ -169,6 +168,12 @@ int fatInit()
     fat_fs.begin_sector = fs_begin_sector + fat_num_resv_sect;
     fat_fs.clus_begin_sector = fat_fs.begin_sector + (fat_fs.num_fats * fat_fs.sect_per_fat);
 
+    //
+    // Load free cluster count
+    //
+    cfReadSector(buffer, fs_begin_sector + 1);
+    fat_fs.free_clusters = intEndian(&buffer[0x1e8]);
+
     sprintf(message1, "Loaded successfully.");
 
     return 0;
@@ -195,6 +200,8 @@ static uint32_t _fat_absolute_sector(uint32_t relative_sector, int fat_num) {
 // flush changes to the fat
 static void _fat_flush_fat(void) {
     uint32_t sector, i;
+    unsigned char fs_info[512];
+    uint32_t old_free;
 
     if (fat_buffer_dirty) {
         // write the dirty sector to each copy of the FAT
@@ -204,6 +211,16 @@ static void _fat_flush_fat(void) {
         }
 
         fat_buffer_dirty = 0;
+    }
+
+    // 
+    // Write free cluster count
+    //
+    cfReadSector(fs_info, fs_begin_sector + 1);
+    old_free = intEndian(&fs_info[0x1e8]);
+    if (old_free != fat_fs.free_clusters) {
+        writeInt(&fs_info[0x1e8], fat_fs.free_clusters);
+        cfWriteSector(fs_info, fs_begin_sector + 1);
     }
 }
 
@@ -577,6 +594,7 @@ static uint32_t _fat_allocate_cluster(uint32_t last_cluster) {
     uint32_t new_last = _fat_find_free_entry(last_cluster);
     fat_set_fat(last_cluster, new_last);
     fat_set_fat(new_last, 0x0ffffff8);
+    --fat_fs.free_clusters;
     return new_last;
 }
 
@@ -818,6 +836,7 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
             fat_set_fat(current, 0xfffffff8);
             de->start_cluster = current;
             ++count;
+            --fat_fs.free_clusters;
         }
 
         // otherwise skip to last entry
@@ -861,6 +880,7 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
             uint32_t next = fat_get_fat(current);
             fat_set_fat(current, 0);
             current = next;
+            ++fat_fs.free_clusters;
         } while (current < 0x0ffffff6 && current > 0);
     }
 
@@ -997,9 +1017,6 @@ void cfSectorsToRam(uint32_t ramaddr, uint32_t lba, int sectors) {
 
 // read a sector 
 void cfReadSector(unsigned char *buffer, uint32_t lba) {
-    if (current_lba == lba)
-        return;
-
     int ret = fseek(cf_file, lba * 512, SEEK_SET);
     if (ret < 0)
         goto error;
@@ -1008,7 +1025,6 @@ void cfReadSector(unsigned char *buffer, uint32_t lba) {
     if (count != 1)
         goto error;
 
-    current_lba = lba;
     return;
 
 error:
