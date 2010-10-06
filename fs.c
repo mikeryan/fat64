@@ -316,6 +316,55 @@ void fat_sub_dirent(uint32_t start_cluster, fat_dirent *de) {
 #define FAT_NOSPACE 1
 
 /**
+ * Read a sector from a directory. Automatically handles buffering and flushing
+ * changes to dirty buffers.
+ */
+static void _dir_read_sector(uint32_t sector) {
+    static uint32_t dir_buffer_sector = 0;
+
+    if (sector != dir_buffer_sector) {
+        // TODO flush dirty buffer
+        cfReadSector(buffer, sector);
+        dir_buffer_sector = sector;
+    }
+}
+
+/**
+ * Load the current sector pointed to by the dirent. Automatically loads new
+ * sectors and clusters.
+ * Returns 0 if next cluster is 0x0ffffff8.
+ * Returns 1 on success.
+ */
+static int _fat_load_dir_sector(fat_dirent *dirent) {
+    uint32_t sector;
+    uint32_t fat_entry;
+
+    if (dirent->index == DE_PER_SECTOR) {
+        dirent->index = 0;
+        ++dirent->sector;
+
+        // load the next cluster once we reach the end of this
+        if (dirent->sector == fat_fs.sect_per_clus) {
+            // look up the cluster number in the FAT
+            fat_entry = fat_get_fat(dirent->cluster);
+            if (fat_entry >= 0x0ffffff8) // last cluster
+                return 0; // end of dir
+
+            dirent->cluster = fat_entry;
+            dirent->sector = 0;
+        }
+    }
+
+    // sector may or may not have changed, but buffering makes this efficient
+    sector = CLUSTER_TO_SECTOR(dirent->cluster) + dirent->sector;
+    _dir_read_sector(sector);
+
+    return 1;
+}
+
+
+
+/**
  * Read a directory.
  * returns:
  *   1  success
@@ -324,13 +373,11 @@ void fat_sub_dirent(uint32_t start_cluster, fat_dirent *de) {
  */
 int fat_readdir(fat_dirent *dirent) {
     int found_file = 0;
-    int i, j;
+    int ret, i, j;
 
-    uint32_t sector;
     uint32_t offset;
     uint32_t attributes;
     uint32_t segment;
-    uint32_t fat_entry;
 
     char *dest;
 
@@ -343,24 +390,9 @@ int fat_readdir(fat_dirent *dirent) {
         memset(dirent->long_name, 0, 256);
 
     do {
-        if (dirent->index == DE_PER_SECTOR) {
-            dirent->index = 0;
-            ++dirent->sector;
-
-            // load the next cluster once we reach the end of this
-            if (dirent->sector == fat_fs.sect_per_clus) {
-                // look up the cluster number in the FAT
-                fat_entry = fat_get_fat(dirent->cluster);
-                if (fat_entry >= 0x0ffffff8) // last cluster
-                    return 0; // end of dir
-
-                dirent->cluster = fat_entry;
-                dirent->sector = 0;
-            }
-        }
-
-        sector = CLUSTER_TO_SECTOR(dirent->cluster) + dirent->sector;
-        cfReadSector(buffer, sector);
+        ret = _fat_load_dir_sector(dirent);
+        if (ret == 0) // end of dir
+            return 0;
 
         offset = dirent->index * 32;
 
@@ -497,7 +529,7 @@ void fat_debug_readdir(uint32_t start_cluster) {
         for (sector_index = 0; sector_index < fat_fs.sect_per_clus; ++sector_index) {
             // load the next sector
             uint32_t sector = CLUSTER_TO_SECTOR(cluster) + sector_index;
-            cfReadSector(buffer, sector);
+            _dir_read_sector(sector);
 
             for (index = 0; index < 512; index += 32) {
                 if (buffer[index] == 0) {
@@ -647,23 +679,6 @@ static int _fat_allocate_dirents(fat_dirent *dirent, int count) {
 }
 
 /**
- * Advance a dirent at the end of a directory. Does not attempt to load a new
- * sector when dirent->sector == fat_fs.sect_per_clus since the FAT should
- * always be 0x0fffffff8 (end of file). _fat_allocat_dirent will allocate a new
- * cluster when that's the case.
- *
- * Whew, this too complicated.
- */
-static void _fat_advance_dirent(fat_dirent *dirent) {
-    ++dirent->index;
-
-    if (dirent->index == DE_PER_SECTOR) {
-        dirent->index = 0;
-        ++dirent->sector;
-    }
-}
-
-/**
  * Find a file by name in a directory. Create it if it doesn't exist.
  * Returns:
  *   0 on success
@@ -749,7 +764,9 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
         printbuf((unsigned char *)segment_chars, 13);
         */
 
-        _fat_advance_dirent(folder);
+        // TODO check for inconsistency here
+        ++folder->index;
+        _fat_load_dir_sector(folder);
     }
 
     //
@@ -793,7 +810,7 @@ static void _fat_write_dirent(fat_dirent *de) {
     uint32_t offset = (de->index - 1) * 32;
     uint16_t top16, bottom16;
 
-    cfReadSector(buffer, sector);
+    _dir_read_sector(sector);
 
     // size
     writeInt(&buffer[offset + 0x1c], de->size);
@@ -805,6 +822,7 @@ static void _fat_write_dirent(fat_dirent *de) {
     bottom16 = (de->start_cluster & 0xffff);
     writeShort(&buffer[offset + 0x1a], bottom16);
 
+    // FIXME: change this to a dirty flag
     cfWriteSector(buffer, sector);
 }
 
@@ -1227,7 +1245,7 @@ int main(int argc, char **argv) {
     if (ret != 0)
         errx(1, "%s", message1);
 
-    test_find_create();
+    // test_find_create();
 
     /*
     puts("testing set_size");
@@ -1241,12 +1259,12 @@ int main(int argc, char **argv) {
 
     ret = fatLoadTable();
     if (ret != 0)
-        errx(1, "%s", message1);
+        warnx("%s", message1);
 
     fat_dirent de;
     fat_root_dirent(&de);
 
-    while ((ret = fat_readdir(&de)) > 0)
+    while ((ret = fat_readdir(&de)) > 0) {
         if (strcmp(de.long_name, "menu.bin") == 0)
             fat_get_sectors(de.start_cluster, sectors, 10);
 
@@ -1256,6 +1274,7 @@ int main(int argc, char **argv) {
             de.start_cluster,
             de.long_name
         );
+    }
 
     if (ret < 0)
         errx(1, "%s", message1);
