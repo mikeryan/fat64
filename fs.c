@@ -824,18 +824,14 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
                 prev = current;
             }
             current = prev;
+            ++count; // account for terminating sector
         }
 
         // add new clusters
         while (count < new_clusters) {
-            uint32_t new_cluster = _fat_find_free_entry(current);
-            fat_set_fat(current, new_cluster);
-            current = new_cluster;
+            current = _fat_allocate_cluster(current);
             ++count;
         }
-
-        // terminate the file
-        fat_set_fat(current, 0x0fffffff8);
     }
 
     // remove sectors
