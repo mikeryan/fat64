@@ -641,9 +641,11 @@ static void _fat_advance_dirent(fat_dirent *dirent) {
 int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
     int ret, segment, i, num_dirents;
     size_t len;
+    char long_name[256];
     char short_name[12];
     char segment_chars[13];
     unsigned char crc, *buf;
+    uint16_t date_field, time_field;
 
     //
     // Try to find the file in the dir, return it if found
@@ -673,40 +675,79 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
         crc = ((crc<<7) | (crc>>1)) + short_name[i];
 
     // trunc long name to 255 bytes
-    len = strlen(filename);
-    if (len > 255) {
-        filename[256] = '\0';
-        len = 255;
-    }
+    strncpy(long_name, filename, 255);
+    long_name[256] = '\0';
+    len = strlen(long_name);
 
     num_dirents  = 1; // short filename
     num_dirents += (len - 1) / 13 + 1; // long filename
     printf("Want to allocate %d dirents\n", num_dirents);
 
-    if (0) // FIXME
     ret = _fat_allocate_dirents(folder, num_dirents);
     ret = FAT_SUCCESS;
     if (ret == FAT_NOSPACE)
         return ret;
 
+    *result_de = *folder;
+
     // copy it 13 bytes at a time
     for (segment = len / 13; segment >= 0; --segment) {
-        strncpy(segment_chars, &filename[segment * 13], 13);
+        strncpy(segment_chars, &long_name[segment * 13], 13);
         buf = &buffer[folder->index * 32];
-        // buf[0] = 1;
-        // cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
+        memset(buf, 0, 32);
 
+        // copy the name
+        for (i = 0; i < 5; ++i)
+            buf[1 + 2 * i] = long_name[segment * 13 + i];
+        for (i = 5; i < 11; ++i)
+            buf[14 + 2 * (i - 5)] = long_name[segment * 13 + i];
+        for (i = 11; i < 13; ++i)
+            buf[28 + 2 * (i - 11)] = long_name[segment * 13 + i];
+
+        buf[0] = (segment + 1) | ((segment == len / 13) << 6);
+        buf[11] = 0x0f;
+        buf[13] = crc;
+
+        cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
+
+        /*
         printf("Segment %d:\n", segment);
         printf("    ");
         printbuf((unsigned char *)segment_chars, 13);
+        */
 
-        if (0) // FIXME
         _fat_advance_dirent(folder);
     }
 
-    fat_rewind(folder);
+    //
+    // 8.3 dirent
+    //
+    buf = &buffer[folder->index * 32];
+    memset(buf, 0, 32);
 
-    // fat_debug_readdir(folder->cluster);
+    // copy the short name 
+    memcpy(buf, short_name, 11);
+
+    // attribute: archive
+    buf[11] = 0x20;
+
+    // dates and times
+    date_field = (11) | (9 << 5) | (21 << 9); // 9/11/01
+    time_field = (46 << 5) | (8 << 11); // 8:46 AM
+    writeShort(&buf[14], time_field); // create
+    writeShort(&buf[16], date_field); // create
+    writeShort(&buf[18], date_field); // access
+    writeShort(&buf[22], time_field); // modify
+    writeShort(&buf[24], date_field); // modify
+
+    cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
+
+    fat_readdir(result_de);
+
+    /*
+    fat_rewind(folder);
+    fat_debug_readdir(folder->cluster);
+    */
 
     return 0;
 }
@@ -1110,7 +1151,7 @@ void test_find_create(void) {
     fat_dirent dir, result;
 
     fat_root_dirent(&dir);
-    ret = fat_find_create("lasjdlkjaslkdjlkjlkjksjdsdmenu.bin", &dir, &result);
+    ret = fat_find_create("abcdefghijklmnopqrstuvqxyz.bin", &dir, &result);
 
     if (ret == 0)
         printf("result: size %u, start %u\n", result.size, result.start_cluster);
