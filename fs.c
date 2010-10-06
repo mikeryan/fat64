@@ -44,6 +44,8 @@ uint32_t fs_begin_sector;
 typedef struct _fat_fs_t {
     uint32_t begin_sector;
     uint32_t sect_per_clus;
+    uint32_t num_fats;
+    uint32_t sect_per_fat;
     uint32_t root_cluster;
     uint32_t clus_begin_sector;
 } fat_fs_t;
@@ -116,8 +118,6 @@ int fatInit()
     // can be localized to fatInit
     char fat_systemid[8];
     uint32_t fat_num_resv_sect;
-    uint32_t fat_num_fats;
-    uint32_t fat_sect_per_fat;
 
     // read first sector
     cfReadSector(buffer, 0);
@@ -162,12 +162,12 @@ int fatInit()
 
     fat_fs.sect_per_clus = buffer[0x0d];
     fat_num_resv_sect = shortEndian(&buffer[0x0e]);
-    fat_num_fats = buffer[0x10];
-    fat_sect_per_fat = intEndian(&buffer[0x24]);
+    fat_fs.num_fats = buffer[0x10];
+    fat_fs.sect_per_fat = intEndian(&buffer[0x24]);
     fat_fs.root_cluster = intEndian(&buffer[0x2c]);
 
     fat_fs.begin_sector = fs_begin_sector + fat_num_resv_sect;
-    fat_fs.clus_begin_sector = fat_fs.begin_sector + (fat_num_fats * fat_sect_per_fat);
+    fat_fs.clus_begin_sector = fat_fs.begin_sector + (fat_fs.num_fats * fat_fs.sect_per_fat);
 
     sprintf(message1, "Loaded successfully.");
 
@@ -175,47 +175,58 @@ int fatInit()
 }
 
 /**
- * Get the sector # and offset into the sector for a given cluster.
+ * Get the relative sector # and offset into the sector for a given cluster.
  */
 void fat_sector_offset(uint32_t cluster, uint32_t *fat_sector, uint32_t *fat_offset) {
     uint32_t index = cluster * 4;   // each cluster is 4 bytes long
     uint32_t sector = index / 512;  // 512 bytes per sector, rounds down
 
-    *fat_sector = fat_fs.begin_sector + sector;
+    *fat_sector = sector;
     *fat_offset = index - sector * 512;
+}
+
+/**
+ * Get the absolute number of a relative fat sector for a given fat.
+ */
+static uint32_t _fat_absolute_sector(uint32_t relative_sector, int fat_num) {
+    return fat_fs.begin_sector + (fat_num * fat_fs.sect_per_fat) + relative_sector;
+}
+
+// flush changes to the fat
+static void _fat_flush_fat(void) {
+    uint32_t sector, i;
+
+    if (fat_buffer_dirty) {
+        // write the dirty sector to each copy of the FAT
+        for (i = 0; i < fat_fs.num_fats; ++i) {
+            sector = _fat_absolute_sector(fat_buffer_sector, i);
+            cfWriteSector(fat_buffer, sector);
+        }
+
+        fat_buffer_dirty = 0;
+    }
 }
 
 /**
  * Load the sector for a FAT cluster, return offset into sector.
  */
 uint32_t _fat_load_fat(uint32_t cluster) {
-    uint32_t sector;
-    uint32_t offset;
+    uint32_t relative_sector, offset;
 
     // get the sector of the FAT and offset into the sector
-    fat_sector_offset(cluster, &sector, &offset);
+    fat_sector_offset(cluster, &relative_sector, &offset);
 
     // only read sector if it has changed! saves time
-    if (sector != fat_buffer_sector) {
-        // write a dirty sector
-        if (fat_buffer_dirty) {
-            cfWriteSector(fat_buffer, fat_buffer_sector);
-            fat_buffer_dirty = 0;
-        }
+    if (relative_sector != fat_buffer_sector) {
+        // flush pending writes
+        _fat_flush_fat();
 
         // read the sector
-        cfReadSector(fat_buffer, sector);
-        fat_buffer_sector = sector;
+        cfReadSector(fat_buffer, _fat_absolute_sector(relative_sector, 0));
+        fat_buffer_sector = relative_sector;
     }
 
     return offset;
-}
-
-// flush changes to the fat
-static void _fat_flush_fat(void) {
-    if (fat_buffer_dirty)
-        cfWriteSector(fat_buffer, fat_buffer_sector);
-    fat_buffer_dirty = 0;
 }
 
 
