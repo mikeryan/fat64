@@ -621,6 +621,7 @@ static int _fat_allocate_dirents(fat_dirent *dirent, int count) {
     if (count > remaining) {
         // TODO: check for file system full
         cluster = _fat_allocate_cluster(dirent->cluster);
+        _fat_flush_fat();
         _fat_clear_cluster(cluster);
     }
 
