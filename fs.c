@@ -539,7 +539,10 @@ void fat_debug_readdir(uint32_t start_cluster) {
 }
 
 /**
- * Get an array of all the sectors a file owns.
+ * Get an array of all the sectors a file owns. Returns all sectors of all
+ * clusters even if the file does not occupy all the sectors (i.e., a 512 byte
+ * file will still return 4 sectors in a 4 sector-per-cluster FS).
+ *
  * Return 0 on succes, -1 on fail
  * Only failure mode is if the size of the sectors array is too small.
  */
