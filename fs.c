@@ -37,6 +37,9 @@ unsigned char fat_buffer[512];
 unsigned long fat_buffer_sector = -1;
 int fat_buffer_dirty = 0;
 
+uint32_t dir_buffer_sector = 0;
+int dir_buffer_dirty = 0;
+
 uint32_t fs_begin_sector;
 
 typedef struct _fat_fs_t {
@@ -316,14 +319,24 @@ void fat_sub_dirent(uint32_t start_cluster, fat_dirent *de) {
 #define FAT_NOSPACE 1
 
 /**
+ * Flush pending changes to a directory.
+ */
+static void _fat_flush_dir(void) {
+    if (dir_buffer_dirty) {
+        cfWriteSector(buffer, dir_buffer_sector);
+        dir_buffer_dirty = 0;
+    }
+}
+
+/**
  * Read a sector from a directory. Automatically handles buffering and flushing
  * changes to dirty buffers.
  */
 static void _dir_read_sector(uint32_t sector) {
-    static uint32_t dir_buffer_sector = 0;
-
     if (sector != dir_buffer_sector) {
-        // TODO flush dirty buffer
+        // flush pending writes
+        _fat_flush_dir();
+
         cfReadSector(buffer, sector);
         dir_buffer_sector = sector;
     }
@@ -729,7 +742,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
 
     num_dirents  = 1; // short filename
     num_dirents += (len - 1) / 13 + 1; // long filename
-    printf("Want to allocate %d dirents\n", num_dirents);
+    // printf("Want to allocate %d dirents\n", num_dirents);
 
     ret = _fat_allocate_dirents(folder, num_dirents);
     ret = FAT_SUCCESS;
@@ -756,7 +769,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
         buf[11] = 0x0f;
         buf[13] = crc;
 
-        cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
+        dir_buffer_dirty = 1;
 
         /*
         printf("Segment %d:\n", segment);
@@ -790,7 +803,8 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
     writeShort(&buf[22], time_field); // modify
     writeShort(&buf[24], date_field); // modify
 
-    cfWriteSector(buffer, CLUSTER_TO_SECTOR(folder->cluster) + folder->sector);
+    dir_buffer_dirty = 1;
+    _fat_flush_dir();
 
     fat_readdir(result_de);
 
@@ -822,8 +836,7 @@ static void _fat_write_dirent(fat_dirent *de) {
     bottom16 = (de->start_cluster & 0xffff);
     writeShort(&buffer[offset + 0x1a], bottom16);
 
-    // FIXME: change this to a dirty flag
-    cfWriteSector(buffer, sector);
+    dir_buffer_dirty = 1;
 }
 
 /**
@@ -912,6 +925,7 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
     _fat_write_dirent(de);
 
     _fat_flush_fat();
+    _fat_flush_dir();
 
     return 0;
 }
