@@ -676,7 +676,13 @@ static int _fat_remaining_dirents(fat_dirent *dirent) {
 }
 
 /**
- * Allocate a bunch of dirents.
+ * Allocate a bunch of dirents at the end of a directory. If there aren't
+ * enough available, allocate a new cluster.
+ *
+ * Preconditions:
+ *  dirent is at end of directory
+ *  count >= 0
+ *
  * Return:
  *  FAT_SUCCESS     success
  *  FAT_NOSPACE     file system full
