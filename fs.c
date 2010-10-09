@@ -636,6 +636,9 @@ int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size) {
  * Allocate a new cluster after the last cluster. Sets the end of file marker
  * in the FAT as a bonus.
  * 
+ * If last_cluster is 0, it assumes this is the first cluster in the file and
+ * WILL NOT set the FAT entry on cluster 0.
+ * 
  * Returns:
  *  FAT_SUCCESS on success, new cluster in ret
  *  FAT_NOSPACE when the FS has no free clusters
@@ -647,7 +650,11 @@ static int _fat_allocate_cluster(uint32_t last_cluster, uint32_t *ret) {
         return FAT_NOSPACE;
 
     new_last = _fat_find_free_entry(last_cluster);
-    fat_set_fat(last_cluster, new_last);
+
+    // see comment above for explanation
+    if (last_cluster != 0)
+        fat_set_fat(last_cluster, new_last);
+
     fat_set_fat(new_last, 0x0ffffff8);
     --fat_fs.free_clusters;
 
@@ -894,11 +901,14 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
 
         // if the file's empty it will have no clusters, so create the first
         if (current == 0) {
-            current = _fat_find_free_entry(0);
-            fat_set_fat(current, 0xfffffff8);
+            ret = _fat_allocate_cluster(0, &current);
+
+            // see comment below about FAT_INCONSISTENT for details
+            if (ret == FAT_NOSPACE)
+                return FAT_INCONSISTENT;
+
             de->start_cluster = current;
             ++count;
-            --fat_fs.free_clusters;
         }
 
         // otherwise skip to last entry
