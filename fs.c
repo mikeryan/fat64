@@ -660,12 +660,17 @@ static void _fat_clear_cluster(uint32_t cluster) {
  */
 static int _fat_remaining_dirents(fat_dirent *dirent) {
     int remaining;
+    uint32_t cluster = dirent->cluster;
 
     // DE_PER_SECTOR for each unused sector in the cluster
     remaining = DE_PER_SECTOR * fat_fs.sect_per_clus - dirent->sector;
 
     // remaining in the current sector
     remaining += DE_PER_SECTOR - dirent->index;
+
+    // add the rest of the clusters in the directory
+    while ((cluster = fat_get_fat(cluster)) < 0xfffff7)
+        remaining += DE_PER_SECTOR * fat_fs.sect_per_clus;
 
     return remaining;
 }
