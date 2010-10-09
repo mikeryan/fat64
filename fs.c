@@ -280,6 +280,8 @@ static uint32_t _fat_find_free_entry(int start) {
     while (fat_get_fat(entry) != 0)
         ++entry;
 
+    // TODO: return status code if we run past the end of the FAT
+
     return entry;
 }
 
@@ -317,6 +319,7 @@ void fat_sub_dirent(uint32_t start_cluster, fat_dirent *de) {
 
 #define FAT_SUCCESS 0
 #define FAT_NOSPACE 1
+#define FAT_INCONSISTENT 256
 
 /**
  * Flush pending changes to a directory.
@@ -633,14 +636,23 @@ int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size) {
  * Allocate a new cluster after the last cluster. Sets the end of file marker
  * in the FAT as a bonus.
  * 
- * Returns the number of the new cluster.
+ * Returns:
+ *  FAT_SUCCESS on success, new cluster in ret
+ *  FAT_NOSPACE when the FS has no free clusters
  */
-static uint32_t _fat_allocate_cluster(uint32_t last_cluster) {
-    uint32_t new_last = _fat_find_free_entry(last_cluster);
+static int _fat_allocate_cluster(uint32_t last_cluster, uint32_t *ret) {
+    uint32_t new_last;
+
+    if (fat_fs.free_clusters == 0)
+        return FAT_NOSPACE;
+
+    new_last = _fat_find_free_entry(last_cluster);
     fat_set_fat(last_cluster, new_last);
     fat_set_fat(new_last, 0x0ffffff8);
     --fat_fs.free_clusters;
-    return new_last;
+
+    *ret = new_last;
+    return FAT_SUCCESS;
 }
 
 /**
@@ -688,13 +700,15 @@ static int _fat_remaining_dirents(fat_dirent *dirent) {
  *  FAT_NOSPACE     file system full
  */
 static int _fat_allocate_dirents(fat_dirent *dirent, int count) {
-    int remaining;
+    int remaining, ret;
     uint32_t cluster;
 
     remaining = _fat_remaining_dirents(dirent);
     if (count > remaining) {
-        // TODO: check for file system full
-        cluster = _fat_allocate_cluster(dirent->cluster);
+        ret = _fat_allocate_cluster(dirent->cluster, &cluster);
+        if (ret == FAT_NOSPACE)
+            return FAT_NOSPACE;
+
         _fat_flush_fat();
         _fat_clear_cluster(cluster);
     }
@@ -853,10 +867,12 @@ static void _fat_write_dirent(fat_dirent *de) {
 /**
  * Sets file size, adding and removing clusters as necessary.
  * Returns:
- *  0 on success
- *  no known failure mode
+ *  FAT_SUCCESS on success
+ *  FAT_NOSPACE if the file system is full
+ *  FAT_INCONSISTENT if the file system needs to be checked
  */
 int fat_set_size(fat_dirent *de, uint32_t size) {
+    int ret;
     uint32_t bytes_per_clus = fat_fs.sect_per_clus * 512;
     uint32_t current_clusters, new_clusters;
 
@@ -871,6 +887,10 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
     if (new_clusters > current_clusters) {
         uint32_t count = 0;
         uint32_t current = de->start_cluster;
+
+        // first make sure we have enough clusters
+        if (new_clusters - current_clusters > fat_fs.free_clusters)
+            return FAT_NOSPACE;
 
         // if the file's empty it will have no clusters, so create the first
         if (current == 0) {
@@ -894,7 +914,14 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
 
         // add new clusters
         while (count < new_clusters) {
-            current = _fat_allocate_cluster(current);
+            ret = _fat_allocate_cluster(current, &current);
+
+            // we already made sure there would be enough clusters according
+            // to metadata, so if we can't allocate a cluster then the file
+            // system must be inconsistent
+            if (ret == FAT_NOSPACE)
+                return FAT_INCONSISTENT;
+
             ++count;
         }
     }
