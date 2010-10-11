@@ -304,9 +304,14 @@ static int _fat_find_free_entry(int start, uint32_t *new_entry) {
     while (entry < num_entries && fat_get_fat(entry) != 0)
         ++entry;
 
-    // TODO: loop back and check the beginning
-    if (entry == num_entries)
-        return FAT_NOSPACE;
+    // if we reach the end, loop back to the beginning and try to find an unused entry
+    if (entry == num_entries) {
+        entry = 1;
+        while (entry < start && fat_get_fat(entry) != 0)
+            ++entry;
+        if (entry == start)
+            return FAT_NOSPACE;
+    }
 
     *new_entry = entry;
     return FAT_SUCCESS;
