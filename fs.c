@@ -49,6 +49,7 @@ typedef struct _fat_fs_t {
     uint32_t sect_per_fat;
     uint32_t root_cluster;
     uint32_t clus_begin_sector;
+    uint32_t total_clusters;
     uint32_t free_clusters;
 } fat_fs_t;
 
@@ -115,11 +116,25 @@ void writeInt(unsigned char *dest, uint32_t val) {
     *(uint32_t *)dest = intEndian((unsigned char *)&val);
 }
 
+/************************
+ * CONSTANTS AND MACROS *
+ ************************/
+
+// first sector of a cluster
+#define CLUSTER_TO_SECTOR(X) ( fat_fs.clus_begin_sector + (X - 2) * fat_fs.sect_per_clus )
+
+// dirents per sector
+#define DE_PER_SECTOR (512 / 32)
+
+#define FAT_SUCCESS 0
+#define FAT_NOSPACE 1
+#define FAT_INCONSISTENT 256
+
 int fatInit()
 {
-    // can be localized to fatInit
     char fat_systemid[8];
     uint32_t fat_num_resv_sect;
+    uint32_t total_sectors, data_offset;
 
     // read first sector
     cfReadSector(buffer, 0);
@@ -169,7 +184,11 @@ int fatInit()
     fat_fs.root_cluster = intEndian(&buffer[0x2c]);
 
     fat_fs.begin_sector = fs_begin_sector + fat_num_resv_sect;
-    fat_fs.clus_begin_sector = fat_fs.begin_sector + (fat_fs.num_fats * fat_fs.sect_per_fat);
+    data_offset = fat_num_resv_sect + (fat_fs.num_fats * fat_fs.sect_per_fat);
+    fat_fs.clus_begin_sector = fs_begin_sector + data_offset;
+
+    total_sectors = intEndian(&buffer[0x20]);
+    fat_fs.total_clusters = (total_sectors - data_offset) / fat_fs.sect_per_clus;
 
     //
     // Load free cluster count
@@ -270,19 +289,27 @@ void fat_set_fat(uint32_t cluster, uint32_t value) {
 
 /**
  * Find the first unused entry in the FAT.
+ *
+ * Returns:
+ *  FAT_SUCCESS on success, with new entry in new_entry
+ *  FAT_NOSPACE if it can't find an unused cluster
  */
-static uint32_t _fat_find_free_entry(int start) {
+static int _fat_find_free_entry(int start, uint32_t *new_entry) {
     uint32_t entry = 1;
+    uint32_t num_entries = fat_fs.total_clusters + 2; // 2 unused entries at the start of the FAT
 
     if (start > 0)
         entry = start;
 
-    while (fat_get_fat(entry) != 0)
+    while (entry < num_entries && fat_get_fat(entry) != 0)
         ++entry;
 
-    // TODO: return status code if we run past the end of the FAT
+    // TODO: loop back and check the beginning
+    if (entry == num_entries)
+        return FAT_NOSPACE;
 
-    return entry;
+    *new_entry = entry;
+    return FAT_SUCCESS;
 }
 
 /**
@@ -310,16 +337,6 @@ void fat_sub_dirent(uint32_t start_cluster, fat_dirent *de) {
     fat_root_dirent(de);
     de->cluster = de->first_cluster = start_cluster;
 }
-
-// first sector of a cluster
-#define CLUSTER_TO_SECTOR(X) ( fat_fs.clus_begin_sector + (X - 2) * fat_fs.sect_per_clus )
-
-// dirents per sector
-#define DE_PER_SECTOR (512 / 32)
-
-#define FAT_SUCCESS 0
-#define FAT_NOSPACE 1
-#define FAT_INCONSISTENT 256
 
 /**
  * Flush pending changes to a directory.
@@ -640,16 +657,24 @@ int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size) {
  * WILL NOT set the FAT entry on cluster 0.
  * 
  * Returns:
- *  FAT_SUCCESS on success, new cluster in ret
+ *  FAT_SUCCESS on success, new cluster in new_cluster
  *  FAT_NOSPACE when the FS has no free clusters
+ *  FAT_INCONSISTENT when the fs needs to be checked
  */
-static int _fat_allocate_cluster(uint32_t last_cluster, uint32_t *ret) {
+static int _fat_allocate_cluster(uint32_t last_cluster, uint32_t *new_cluster) {
+    int ret;
     uint32_t new_last;
 
     if (fat_fs.free_clusters == 0)
         return FAT_NOSPACE;
 
-    new_last = _fat_find_free_entry(last_cluster);
+    ret = _fat_find_free_entry(last_cluster, &new_last);
+
+    // according to the free cluster count, we should be able to find a free
+    // cluster. since _fat_find_free_entry couldn't, this means the FS must be
+    // in an inconistent state
+    if (ret == FAT_NOSPACE)
+        return FAT_INCONSISTENT;
 
     // see comment above for explanation
     if (last_cluster != 0)
@@ -658,7 +683,7 @@ static int _fat_allocate_cluster(uint32_t last_cluster, uint32_t *ret) {
     fat_set_fat(new_last, 0x0ffffff8);
     --fat_fs.free_clusters;
 
-    *ret = new_last;
+    *new_cluster = new_last;
     return FAT_SUCCESS;
 }
 
