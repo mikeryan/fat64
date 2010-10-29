@@ -755,11 +755,10 @@ static int _fat_allocate_dirents(fat_dirent *dirent, int count) {
 
 /**
  * Find a file by name in a directory. Create it if it doesn't exist.
- * Returns:
- *   0 on success
- *   -1 on fail (if the file does not exist)
  *
- * TODO: create file when it does not exist
+ * Return:
+ *   FAT_SUCCESS    success
+ *   FAT_NOSPACE    file system full
  */
 int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
     int ret, segment, i, num_dirents;
@@ -778,7 +777,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
         if (strcasecmp(filename, folder->name) == 0) {
             // found, return it
             *result_de = *folder;
-            return 0;
+            return FAT_SUCCESS;
         }
 
     //
@@ -875,7 +874,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
     fat_debug_readdir(folder->cluster);
     */
 
-    return 0;
+    return FAT_SUCCESS;
 }
 
 /**
