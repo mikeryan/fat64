@@ -798,7 +798,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
 
     // trunc long name to 255 bytes
     strncpy(long_name, filename, 255);
-    long_name[256] = '\0';
+    long_name[255] = '\0';
     len = strlen(long_name);
 
     num_dirents  = 1; // short filename
