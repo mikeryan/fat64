@@ -823,11 +823,11 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
 
         // copy the name
         for (i = 0; i < 5; ++i)
-            buf[1 + 2 * i] = long_name[segment * 13 + i];
+            buf[1 + 2 * i] = segment_chars[i];
         for (i = 5; i < 11; ++i)
-            buf[14 + 2 * (i - 5)] = long_name[segment * 13 + i];
+            buf[14 + 2 * (i - 5)] = segment_chars[i];
         for (i = 11; i < 13; ++i)
-            buf[28 + 2 * (i - 11)] = long_name[segment * 13 + i];
+            buf[28 + 2 * (i - 11)] = segment_chars[i];
 
         buf[0] = (segment + 1) | ((segment == len / 13) << 6);
         buf[11] = 0x0f;
