@@ -765,7 +765,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
     size_t len;
     char long_name[256];
     char short_name[12];
-    char segment_chars[13];
+    char segment_chars[26];
     unsigned char crc, *buf;
     uint16_t date_field, time_field;
 
@@ -815,31 +815,36 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
 
     // copy it 13 bytes at a time
     for (segment = len / 13; segment >= 0; --segment) {
-        memset(segment_chars, 0, 13);
-        strncpy(segment_chars, &long_name[segment * 13], 13);
+        memset(segment_chars, 0, 26);
+
+        // copy up to (and including) the first ASCII NUL
+        for (i = 0; i < 13; ++i) {
+            segment_chars[2*i] = long_name[segment * 13 + i];
+            if (segment_chars[2*i] == '\0') {
+                ++i; // make sure we FF after the \0
+                break;
+            }
+        }
+
+        // 0xFF the rest
+        for ( ; i < 13; ++i) {
+            segment_chars[2*i] = 0xff;
+            segment_chars[2*i+1] = 0xff;
+        }
 
         buf = &buffer[folder->index * 32];
         memset(buf, 0, 32);
 
         // copy the name
-        for (i = 0; i < 5; ++i)
-            buf[1 + 2 * i] = segment_chars[i];
-        for (i = 5; i < 11; ++i)
-            buf[14 + 2 * (i - 5)] = segment_chars[i];
-        for (i = 11; i < 13; ++i)
-            buf[28 + 2 * (i - 11)] = segment_chars[i];
+        memcpy(&buf[1], &segment_chars[0], 10);
+        memcpy(&buf[14], &segment_chars[10], 12);
+        memcpy(&buf[28], &segment_chars[22], 4);
 
         buf[0] = (segment + 1) | ((segment == len / 13) << 6);
         buf[11] = 0x0f;
         buf[13] = crc;
 
         dir_buffer_dirty = 1;
-
-        /*
-        printf("Segment %d:\n", segment);
-        printf("    ");
-        printbuf((unsigned char *)segment_chars, 13);
-        */
 
         // TODO check for inconsistency here
         ++folder->index;
