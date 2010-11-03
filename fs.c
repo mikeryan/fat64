@@ -797,6 +797,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
         crc = ((crc<<7) | (crc>>1)) + short_name[i];
 
     // trunc long name to 255 bytes
+    memset(long_name, 0, 255);
     strncpy(long_name, filename, 255);
     long_name[255] = '\0';
     len = strlen(long_name);
@@ -814,7 +815,9 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
 
     // copy it 13 bytes at a time
     for (segment = len / 13; segment >= 0; --segment) {
+        memset(segment_chars, 0, 13);
         strncpy(segment_chars, &long_name[segment * 13], 13);
+
         buf = &buffer[folder->index * 32];
         memset(buf, 0, 32);
 
