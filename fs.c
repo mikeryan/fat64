@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef unsigned int uint32_t;
 typedef unsigned short uint16_t;
@@ -1343,6 +1344,8 @@ int main(int argc, char **argv) {
         printf("Usage: %s <file_system.img>\n", argv[0]);
         return 1;
     }
+
+    srand(time(NULL));
 
     cf_file = fopen(argv[1], "r+");
     if (cf_file == NULL)
