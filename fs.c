@@ -763,20 +763,77 @@ static int _fat_allocate_dirents(fat_dirent *dirent, int count) {
 }
 
 /**
- * Find a file by name in a directory. Create it if it doesn't exist.
+ * Initialize the first cluster of a directory. Creates the . and .. entries.
+ */
+static void _fat_init_dir(uint32_t cluster, uint32_t parent) {
+    unsigned char buf[512] = { 0, };
+    char name[11];
+    uint32_t i, sector = CLUSTER_TO_SECTOR(cluster);
+    uint16_t top16, bottom16;
+
+    memset(name, 0x20, sizeof(name));
+
+    // FAT32 hack: if parent is root, cluster should be 0
+    if (parent == fat_fs.root_cluster)
+        parent = 0;
+
+    //
+    // .
+    //
+    name[0] = '.';
+    memcpy(&buf[0], name, sizeof(name));
+    buf[11] = 0x10; // dir
+
+    // current dir start cluster
+    top16 = (cluster >> 16 & 0xffff);
+    bottom16 = (cluster & 0xffff);
+    writeShort(&buf[0x14], top16);
+    writeShort(&buf[0x1a], bottom16);
+
+    //
+    // ..
+    //
+    name[1] = '.';
+    memcpy(&buf[32], name, sizeof(name));
+    buf[32+11] = 0x10; // dir
+
+    // parent start cluster
+    top16 = (parent >> 16 & 0xffff);
+    bottom16 = (parent & 0xffff);
+    writeShort(&buf[32 + 0x14], top16);
+    writeShort(&buf[32 + 0x1a], bottom16);
+
+    //
+    // write first sector
+    //
+    cfWriteSector(buf, sector);
+
+    //
+    // zero the rest of the sectors
+    //
+    memset(buf, 0, 32 * 2);
+    for (i = 1; i < fat_fs.sect_per_clus; ++i)
+        cfWriteSector(buf, sector + i);
+}
+
+/**
+ * Find a file by name in a directory. Create it if it doesn't exist. Use the
+ * dir flag to specify that you want to create a directory.
  *
  * Return:
  *   FAT_SUCCESS    success
  *   FAT_NOSPACE    file system full
+ *   FAT_INCONSISTENT fs needs to be checked
  */
-int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
-    int ret, segment, i, num_dirents;
+int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir) {
+    int ret, segment, i, num_dirents, total_clusters;
     size_t len;
     char long_name[256];
     char short_name[12];
     char segment_chars[26];
     unsigned char crc, *buf;
     uint16_t date_field, time_field;
+    uint32_t start_cluster;
 
     //
     // Try to find the file in the dir, return it if found
@@ -815,10 +872,16 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
     num_dirents += (len - 1) / 13 + 1; // long filename
     // printf("Want to allocate %d dirents\n", num_dirents);
 
+    total_clusters = num_dirents + (dir ? 1 : 0); // allocate dir's first cluster
+
+    // make sure we've got enough room
+    if (fat_fs.free_clusters < total_clusters)
+        return FAT_NOSPACE;
+
     ret = _fat_allocate_dirents(folder, num_dirents);
     ret = FAT_SUCCESS;
     if (ret == FAT_NOSPACE)
-        return ret;
+        return FAT_INCONSISTENT;
 
     *result_de = *folder;
 
@@ -869,8 +932,31 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de) {
     // copy the short name 
     memcpy(buf, short_name, 11);
 
-    // attribute: archive
-    buf[11] = 0x20;
+    // directory: allocate the first cluster and init it
+    if (dir) {
+        uint16_t top16, bottom16;
+
+        // attribute: archive and dir flags
+        buf[11] = 0x30;
+
+        ret = _fat_allocate_cluster(0, &start_cluster);
+        if (ret == FAT_NOSPACE)
+            return FAT_INCONSISTENT;
+        _fat_init_dir(start_cluster, folder->first_cluster);
+
+        // start cluster
+        top16 = (start_cluster >> 16 & 0xffff);
+        writeShort(&buf[0x14], top16);
+
+        bottom16 = (start_cluster & 0xffff);
+        writeShort(&buf[0x1a], bottom16);
+    }
+
+    // regular file
+    else {
+        // attribute: archive
+        buf[11] = 0x20;
+    }
 
     // dates and times
     date_field = (11) | (9 << 5) | (21 << 9); // 9/11/01
@@ -1304,7 +1390,7 @@ void test_find_create(void) {
     fat_dirent dir, result;
 
     fat_root_dirent(&dir);
-    ret = fat_find_create("abcdefghijklmnopqrstuvqxyz.bin", &dir, &result);
+    ret = fat_find_create("abcdefghijklmnopqrstuvqxyz.bin", &dir, &result, 0);
 
     if (ret == 0)
         printf("result: size %u, start %u\n", result.size, result.start_cluster);
@@ -1315,7 +1401,7 @@ void test_set_size(void) {
     fat_dirent dir, result;
 
     fat_root_dirent(&dir);
-    ret = fat_find_create("1", &dir, &result);
+    ret = fat_find_create("1", &dir, &result, 0);
 
     if (ret != 0)
         abort();
