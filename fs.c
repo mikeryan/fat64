@@ -570,6 +570,8 @@ void fat_debug_readdir(uint32_t start_cluster) {
             _dir_read_sector(sector);
 
             for (index = 0; index < 512; index += 32) {
+                uint32_t start_cluster;
+
                 if (buffer[index] == 0) {
                     printf("end of dir marker, done\n");
                     return;
@@ -617,6 +619,12 @@ void fat_debug_readdir(uint32_t start_cluster) {
                     printf("    %-30s %02x\n", "checksum (calculated):", sum);
                 }
 
+                start_cluster = shortEndian(buffer + index + 0x14) << 16;
+                start_cluster |= shortEndian(buffer + index + 0x1a);
+                printf("    %-30s %u\n", "start cluster:", start_cluster);
+
+                printbuf(buffer + index, 16);
+                printbuf(buffer + index + 16, 16);
                 printf("    ----\n");
             }
         }
