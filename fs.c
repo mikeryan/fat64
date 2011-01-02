@@ -944,6 +944,9 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, i
             return FAT_INCONSISTENT;
         _fat_init_dir(start_cluster, folder->first_cluster);
 
+        // flush the newly-allocated cluster
+        _fat_flush_fat();
+
         // start cluster
         top16 = (start_cluster >> 16 & 0xffff);
         writeShort(&buf[0x14], top16);
