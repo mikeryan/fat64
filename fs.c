@@ -1521,6 +1521,12 @@ int main(int argc, char **argv) {
     printf("\n");
 
     uint32_t sector, offset;
+    ret = fat_get_sector(start, 800, &sector, &offset);
+    printf("ret %d, sector %d offset %d\n", ret, sector, offset);
+    ret = fat_get_sector(start, 1024, &sector, &offset);
+    printf("ret %d, sector %d offset %d\n", ret, sector, offset);
+    ret = fat_get_sector(start, 11024, &sector, &offset);
+    printf("ret %d, sector %d offset %d\n", ret, sector, offset);
     ret = fat_get_sector(start, 211024, &sector, &offset);
     printf("ret %d, sector %d offset %d\n", ret, sector, offset);
 
