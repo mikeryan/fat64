@@ -129,6 +129,7 @@ void writeInt(unsigned char *dest, uint32_t val) {
 
 #define FAT_SUCCESS 0
 #define FAT_NOSPACE 1
+#define FAT_EOF 2
 #define FAT_INCONSISTENT 256
 
 int fatInit()
@@ -661,6 +662,39 @@ int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size) {
     }
 
     return 0;
+}
+
+/**
+ * Return the sector and offset into the sector of a file given start cluster
+ * and offset.
+ *
+ * Returns:
+ *  FAT_SUCCESS on success
+ *  FAT_EOF when the end of file is reached
+ */
+int fat_get_sector(uint32_t start_cluster, uint32_t offset, uint32_t *sector, uint32_t *new_offset) {
+    uint32_t bytes_per_clus = fat_fs.sect_per_clus * 512;
+    uint32_t cluster = start_cluster;
+
+    // skip to the right cluster
+    while (offset >= bytes_per_clus) {
+        cluster = fat_get_fat(cluster);
+
+        // hit the end of the file
+        if (cluster >= 0x0ffffff7)
+            return FAT_EOF;
+
+        offset -= bytes_per_clus;
+    }
+
+    *sector = CLUSTER_TO_SECTOR(cluster);
+    while (offset >= 512) {
+        ++*sector;
+        offset -= 512;
+    }
+    *new_offset = offset;
+
+    return FAT_SUCCESS;
 }
 
 /**
@@ -1463,9 +1497,12 @@ int main(int argc, char **argv) {
     fat_dirent de;
     fat_root_dirent(&de);
 
+    uint32_t start;
     while ((ret = fat_readdir(&de)) > 0) {
-        if (strcmp(de.long_name, "menu.bin") == 0)
+        if (strcmp(de.long_name, "menu.bin") == 0) {
             fat_get_sectors(de.start_cluster, sectors, 10);
+            start = de.start_cluster;
+        }
 
         printf(
             "%-12s (%c) %5d %s\n",
@@ -1482,6 +1519,10 @@ int main(int argc, char **argv) {
     for (i = 0; i < 10; ++i)
         printf("%d ", sectors[i]);
     printf("\n");
+
+    uint32_t sector, offset;
+    ret = fat_get_sector(start, 211024, &sector, &offset);
+    printf("ret %d, sector %d offset %d\n", ret, sector, offset);
 
     return 0;
 }
