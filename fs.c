@@ -727,7 +727,7 @@ static int _fat_remaining_dirents(fat_dirent *dirent) {
     remaining += DE_PER_SECTOR - dirent->index;
 
     // add the rest of the clusters in the directory
-    while ((cluster = fat_get_fat(cluster)) < 0xfffff7)
+    while ((cluster = fat_get_fat(cluster)) < 0x0ffffff7)
         remaining += DE_PER_SECTOR * fat_fs.sect_per_clus;
 
     return remaining;
