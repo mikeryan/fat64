@@ -31,6 +31,23 @@ typedef struct _fat_dirent {
     uint32_t first_cluster;
 } fat_dirent;
 
+/*
+ * Eventually we can whittle fat_file_t down to this, but for now the typedef
+ * makes implementation simpler.
+typedef struct _fat_file_t {
+    char *name;
+    char short_name[13];
+    char long_name[256];
+    int directory;
+    uint32_t start_cluster;
+    uint32_t size;
+} fat_file_t;
+*/
+typedef struct _fat_file_t {
+    fat_dirent de;
+    uint32_t position;
+} fat_file_t;
+
 unsigned char buffer[512];
 char message1[BUFSIZ];
 
@@ -130,7 +147,29 @@ void writeInt(unsigned char *dest, uint32_t val) {
 #define FAT_SUCCESS 0
 #define FAT_NOSPACE 1
 #define FAT_EOF 2
+#define FAT_NOTFOUND 3
 #define FAT_INCONSISTENT 256
+
+/**
+ * Returns a human-readable string for one of the above error codes.
+ */
+char *fat_errstr(int code) {
+    switch (code) {
+        case FAT_SUCCESS:
+            return "success";
+        case FAT_NOSPACE:
+            return "file system full";
+        case FAT_EOF:
+            return "end of file";
+        case FAT_NOTFOUND:
+            return "file not found";
+        case FAT_INCONSISTENT:
+            return "inconsistent file system";
+        default:
+            break;
+    }
+    return "unknown error";
+}
 
 int fatInit()
 {
@@ -335,6 +374,18 @@ int fat_root_dirent(fat_dirent *dirent) {
     dirent->first_cluster = fat_fs.root_cluster;
 
     return 0;
+}
+
+/**
+ * Get the root directory.
+ *
+ * Returns:
+ *  FAT_SUCCESS always
+ */
+int fat_root(fat_file_t *file) {
+    fat_root_dirent(&file->de);
+    file->de.start_cluster = file->de.first_cluster;
+    return FAT_SUCCESS;
 }
 
 /*
@@ -856,10 +907,11 @@ static void _fat_init_dir(uint32_t cluster, uint32_t parent) {
  *
  * Return:
  *   FAT_SUCCESS    success
+ *   FAT_NOTFOUND   file/dir not found and create flag not set
  *   FAT_NOSPACE    file system full
  *   FAT_INCONSISTENT fs needs to be checked
  */
-int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir) {
+int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir, int create) {
     int ret, segment, i, num_dirents, total_clusters;
     size_t len;
     char long_name[256];
@@ -883,6 +935,9 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, i
     //
     // File not found. Create a new file
     //
+
+    if (!create)
+        return FAT_NOTFOUND;
 
     // short name is a random alphabetic string
     for (i = 0; i < 11; ++i)
@@ -1013,6 +1068,46 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, i
     fat_rewind(folder);
     fat_debug_readdir(folder->cluster);
     */
+
+    return FAT_SUCCESS;
+}
+
+/**
+ * TODO desc
+ *
+ * flags:
+ *      c   create the file/directory if it doesn't exist
+ *      d   used with c, creates a directory instead of a file
+ *
+ * flags MAY be NULL, in which case no flags are assumed
+ *
+ * Return:
+ *   FAT_SUCCESS    success
+ *   FAT_NOTFOUND   file/dir not found and create flag not set
+ *   FAT_NOSPACE    file system full
+ *   FAT_INCONSISTENT fs needs to be checked
+ */
+int fat_open(char *filename, fat_file_t *folder, char *flags, fat_file_t *file) {
+    int dir, create, ret;
+    fat_dirent folder_de, result_de;
+
+    if (flags == NULL) flags = "";
+    dir = strchr(flags, 'd') != NULL;
+    create = strchr(flags, 'c') != NULL;
+
+    fat_sub_dirent(folder->de.start_cluster, &folder_de);
+
+    ret = fat_find_create(filename, &folder_de, &result_de, dir, create);
+    if (ret != FAT_SUCCESS)
+        return ret;
+
+    file->de = result_de;
+    file->de.first_cluster = result_de.start_cluster;
+    file->de.index = 0;
+    file->de.cluster = result_de.start_cluster;
+    file->de.sector = 0;
+
+    file->position = 0;
 
     return FAT_SUCCESS;
 }
@@ -1427,7 +1522,7 @@ void test_find_create(void) {
     fat_dirent dir, result;
 
     fat_root_dirent(&dir);
-    ret = fat_find_create("abcdefghijklmnopqrstuvqxyz.bin", &dir, &result, 0);
+    ret = fat_find_create("abcdefghijklmnopqrstuvqxyz.bin", &dir, &result, 0, 1);
 
     if (ret == 0)
         printf("result: size %u, start %u\n", result.size, result.start_cluster);
@@ -1438,7 +1533,7 @@ void test_set_size(void) {
     fat_dirent dir, result;
 
     fat_root_dirent(&dir);
-    ret = fat_find_create("1", &dir, &result, 0);
+    ret = fat_find_create("1", &dir, &result, 0, 0);
 
     if (ret != 0)
         abort();
@@ -1489,6 +1584,27 @@ int main(int argc, char **argv) {
     fat_debug_readdir(fat_fs.root_cluster);
     return 0;
     */
+
+    puts("testing fat_open");
+
+    fat_file_t root_folder, menu_file, dirrr_dir;
+
+    fat_root(&root_folder);
+
+    ret = fat_open("menuu.bin", &root_folder, NULL, &menu_file);
+    // ret = fat_find_create("menu.bin", &root_folder, &menu_file, 0, 0);
+    
+    printf("result: %s\n", fat_errstr(ret));
+
+    ret = fat_open("dirrr", &root_folder, "cd", &dirrr_dir);
+    printf("result: %s\n", fat_errstr(ret));
+
+    ret = fat_open("heya", &dirrr_dir, "", &menu_file);
+    printf("result: %s\n", fat_errstr(ret));
+    printf("size: %u\n", menu_file.de.size);
+
+
+    return 0;
 
     ret = fatLoadTable();
     if (ret != 0)
