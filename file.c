@@ -71,7 +71,6 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, i
         return FAT_NOSPACE;
 
     ret = fat_allocate_dirents(folder, num_dirents);
-    ret = FAT_SUCCESS;
     if (ret == FAT_NOSPACE)
         return FAT_INCONSISTENT;
 
