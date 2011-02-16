@@ -1,6 +1,15 @@
-CFLAGS = -DLINUX -g -Wall -Werror -lm
+OBJS = 64drive.o dir.o disk.o fat.o file.o fs.o
 
-all: fs
+CFLAGS = -DLINUX -g -Wall -Werror
+LDFLAGS = -lm
+
+all: fs debug
+
+fs: $(OBJS) main.o
+	$(CC) -o fs $(OBJS) main.o $(LDFLAGS)
+
+debug: $(OBJS) debug.o
+	$(CC) -o debug $(OBJS) debug.o $(LDFLAGS)
 
 clean:
-	rm -f fs
+	rm -f fs $(OBJS) main.o debug.o
