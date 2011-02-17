@@ -97,10 +97,10 @@ void fat_debug_readdir(uint32_t start_cluster);
 int fat_allocate_dirents(fat_dirent *dirent, int count);
 void fat_init_dir(uint32_t cluster, uint32_t parent);
 void fat_sub_dirent(uint32_t start_cluster, fat_dirent *de);
+int fat_dir_create_file(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir);
 
 // FIXME these should not be global
 // move them back into dir.c and make them static again
-int _fat_load_dir_sector(fat_dirent *dirent);
 void _fat_flush_dir(void);
 void _fat_write_dirent(fat_dirent *de);
 

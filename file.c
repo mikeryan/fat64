@@ -15,14 +15,7 @@
  *   FAT_INCONSISTENT fs needs to be checked
  */
 int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir, int create) {
-    int ret, segment, i, num_dirents, total_clusters;
-    uint32_t len;
-    char long_name[256];
-    char short_name[12];
-    char segment_chars[26];
-    unsigned char crc, *buf;
-    uint16_t date_field, time_field;
-    uint32_t start_cluster;
+    int ret;
 
     //
     // Try to find the file in the dir, return it if found
@@ -42,137 +35,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, i
     if (!create)
         return FAT_NOTFOUND;
 
-    // short name is a random alphabetic string
-    for (i = 0; i < 11; ++i)
-        short_name[i] = 'A' + (rand() % ('Z' - 'A' + 1));
-    short_name[11] = 0; // for display purposes
-
-    // printf("Short name %s\n", short_name);
-
-    // calc the CRC
-    crc = 0;
-    for (i = 0; i < 11; ++i)
-        crc = ((crc<<7) | (crc>>1)) + short_name[i];
-
-    // trunc long name to 255 bytes
-    memset(long_name, 0, 255);
-    strncpy(long_name, filename, 255);
-    long_name[255] = '\0';
-    len = strlen(long_name);
-
-    num_dirents  = 1; // short filename
-    num_dirents += (len - 1) / 13 + 1; // long filename
-    // printf("Want to allocate %d dirents\n", num_dirents);
-
-    total_clusters = num_dirents + (dir ? 1 : 0); // allocate dir's first cluster
-
-    // make sure we've got enough room
-    if (fat_fs.free_clusters < total_clusters)
-        return FAT_NOSPACE;
-
-    ret = fat_allocate_dirents(folder, num_dirents);
-    if (ret == FAT_NOSPACE)
-        return FAT_INCONSISTENT;
-
-    _fat_load_dir_sector(folder);
-    *result_de = *folder;
-
-    // copy it 13 bytes at a time
-    for (segment = len / 13; segment >= 0; --segment) {
-        memset(segment_chars, 0, 26);
-
-        // copy up to (and including) the first ASCII NUL
-        for (i = 0; i < 13; ++i) {
-            segment_chars[2*i] = long_name[segment * 13 + i];
-            if (segment_chars[2*i] == '\0') {
-                ++i; // make sure we FF after the \0
-                break;
-            }
-        }
-
-        // 0xFF the rest
-        for ( ; i < 13; ++i) {
-            segment_chars[2*i] = 0xff;
-            segment_chars[2*i+1] = 0xff;
-        }
-
-        buf = &buffer[folder->index * 32];
-        memset(buf, 0, 32);
-
-        // copy the name
-        memcpy(&buf[1], &segment_chars[0], 10);
-        memcpy(&buf[14], &segment_chars[10], 12);
-        memcpy(&buf[28], &segment_chars[22], 4);
-
-        buf[0] = (segment + 1) | ((segment == len / 13) << 6);
-        buf[11] = 0x0f;
-        buf[13] = crc;
-
-        dir_buffer_dirty = 1;
-
-        // TODO check for inconsistency here
-        ++folder->index;
-        _fat_load_dir_sector(folder);
-    }
-
-    //
-    // 8.3 dirent
-    //
-    buf = &buffer[folder->index * 32];
-    memset(buf, 0, 32);
-
-    // copy the short name 
-    memcpy(buf, short_name, 11);
-
-    // directory: allocate the first cluster and init it
-    if (dir) {
-        uint16_t top16, bottom16;
-
-        // attribute: archive and dir flags
-        buf[11] = 0x30;
-
-        ret = fat_allocate_cluster(0, &start_cluster);
-        if (ret == FAT_NOSPACE)
-            return FAT_INCONSISTENT;
-        fat_init_dir(start_cluster, folder->first_cluster);
-
-        // flush the newly-allocated cluster
-        fat_flush_fat();
-
-        // start cluster
-        top16 = (start_cluster >> 16 & 0xffff);
-        writeShort(&buf[0x14], top16);
-
-        bottom16 = (start_cluster & 0xffff);
-        writeShort(&buf[0x1a], bottom16);
-    }
-
-    // regular file
-    else {
-        // attribute: archive
-        buf[11] = 0x20;
-    }
-
-    // dates and times
-    date_field = (11) | (9 << 5) | (21 << 9); // 9/11/01
-    time_field = (46 << 5) | (8 << 11); // 8:46 AM
-    writeShort(&buf[14], time_field); // create
-    writeShort(&buf[16], date_field); // create
-    writeShort(&buf[18], date_field); // access
-    writeShort(&buf[22], time_field); // modify
-    writeShort(&buf[24], date_field); // modify
-
-    dir_buffer_dirty = 1;
-    _fat_flush_dir();
-
-    fat_readdir(result_de);
-
-    /*
-    fat_rewind(folder);
-    fat_debug_readdir(folder->cluster);
-    */
-
-    return FAT_SUCCESS;
+    return fat_dir_create_file(filename, folder, result_de, dir);
 }
 
 /**

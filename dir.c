@@ -1,5 +1,6 @@
 #include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include "common.h"
@@ -72,7 +73,7 @@ static void _dir_read_sector(uint32_t sector) {
  * Returns 0 if next cluster is 0x0ffffff8.
  * Returns 1 on success.
  */
-int _fat_load_dir_sector(fat_dirent *dirent) {
+static int _fat_load_dir_sector(fat_dirent *dirent) {
     uint32_t sector;
     uint32_t fat_entry;
 
@@ -100,8 +101,6 @@ int _fat_load_dir_sector(fat_dirent *dirent) {
 
     return 1;
 }
-
-
 
 /**
  * Read a directory.
@@ -273,6 +272,8 @@ void fat_debug_readdir(uint32_t start_cluster) {
             for (index = 0; index < 512; index += 32) {
                 uint32_t start_cluster;
 
+                printf("  %d/%2d\n", sector_index, index/32);
+
                 if (buffer[index] == 0) {
                     printf("end of dir marker, done\n");
                     return;
@@ -326,7 +327,9 @@ void fat_debug_readdir(uint32_t start_cluster) {
                 if (buffer[index] == 0xe5)
                     printf("    %-30s\n", "deleted");
 
+                printf("        ");
                 printbuf(buffer + index, 16);
+                printf("        ");
                 printbuf(buffer + index + 16, 16);
                 printf("    ----\n");
             }
@@ -472,4 +475,193 @@ void _fat_write_dirent(fat_dirent *de) {
     writeShort(&buffer[offset + 0x1a], bottom16);
 
     dir_buffer_dirty = 1;
+}
+
+/**
+ * Check that there is enough free space to allocate all the dirents for a
+ * new file. Also make sure there's space for a new directory's first cluter.
+ */
+static int _check_free_space(fat_dirent *folder, int num_dirents, int dir) {
+    uint32_t total_clusters = 0;
+
+    // if there aren't enough dirents we will allocate a new cluster in the dir
+    if (num_dirents > _fat_remaining_dirents(folder))
+        ++total_clusters;
+
+    // allocate new dir's first cluster
+    if (dir)
+        ++total_clusters;
+
+    // make sure we've got enough room
+    return fat_fs.free_clusters >= total_clusters;
+}
+
+/**
+ * Copy a segment of the LFN into its dirent.
+ */
+static void _copy_lfn_segment(fat_dirent *de, char *long_name, int segment) {
+    int i;
+    char segment_chars[26];
+    unsigned char *buf;
+
+    memset(segment_chars, 0, 26);
+
+    // copy up to (and including) the first ASCII NUL
+    for (i = 0; i < 13; ++i) {
+        segment_chars[2*i] = long_name[segment * 13 + i];
+        if (segment_chars[2*i] == '\0') {
+            ++i; // make sure we FF after the \0
+            break;
+        }
+    }
+
+    // 0xFF the rest
+    for ( ; i < 13; ++i) {
+        segment_chars[2*i] = 0xff;
+        segment_chars[2*i+1] = 0xff;
+    }
+
+    buf = &buffer[de->index * 32];
+    memset(buf, 0, 32);
+
+    // copy the name
+    memcpy(&buf[1], &segment_chars[0], 10);
+    memcpy(&buf[14], &segment_chars[10], 12);
+    memcpy(&buf[28], &segment_chars[22], 4);
+}
+
+/**
+ * Create a file in a directory. The folder dirent must be at EOD. If a dir is
+ * created, a cluster will be allocated for it and it will be initialized with
+ * . and .. entries.
+ *
+ * Args:
+ *  filename    name of the new file
+ *  folder      directory to create it in, MUST be at EOD
+ *  result_de   de representing the newly-created file
+ *  dir         true if you want to create a dir
+ *
+ * Returns:
+ *  FAT_SUCCESS     success
+ *  FAT_NOSPACE     not enough space to create the dirent and/or first cluster of a dir
+ *  FAT_INCONSISTENT    fs needs to be checked
+ */
+int fat_dir_create_file(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir) {
+    int ret, segment, i, num_dirents;
+    uint32_t len;
+    char long_name[256];
+    char short_name[12];
+    unsigned char crc, *buf;
+    uint16_t date_field, time_field;
+    uint32_t start_cluster;
+
+    // short name is a random alphabetic string
+    for (i = 0; i < 11; ++i)
+        short_name[i] = 'A' + (rand() % ('Z' - 'A' + 1));
+    short_name[11] = 0; // for display purposes
+
+    // printf("Short name %s\n", short_name);
+
+    // calc the CRC
+    crc = 0;
+    for (i = 0; i < 11; ++i)
+        crc = ((crc<<7) | (crc>>1)) + short_name[i];
+
+    // trunc long name to 255 bytes
+    memset(long_name, 0, 255);
+    strncpy(long_name, filename, 255);
+    long_name[255] = '\0';
+    len = strlen(long_name);
+
+    num_dirents  = 1; // short filename
+    num_dirents += (len - 1) / 13 + 1; // long filename
+    // printf("Want to allocate %d dirents\n", num_dirents);
+
+    // give up if we don't have enough space
+    ret = _check_free_space(folder, num_dirents, dir);
+    if (!ret)
+        return FAT_NOSPACE;
+
+    ret = fat_allocate_dirents(folder, num_dirents);
+    if (ret == FAT_NOSPACE)
+        return FAT_INCONSISTENT;
+
+    _fat_load_dir_sector(folder);
+    *result_de = *folder;
+
+    // copy it 13 bytes at a time
+    for (segment = len / 13; segment >= 0; --segment) {
+        _copy_lfn_segment(folder, long_name, segment);
+
+        buf = &buffer[folder->index * 32];
+
+        buf[0] = (segment + 1) | ((segment == len / 13) << 6);
+        buf[11] = 0x0f;
+        buf[13] = crc;
+
+        dir_buffer_dirty = 1;
+
+        // TODO check for inconsistency here
+        ++folder->index;
+        _fat_load_dir_sector(folder);
+    }
+
+    //
+    // 8.3 dirent
+    //
+    buf = &buffer[folder->index * 32];
+    memset(buf, 0, 32);
+
+    // copy the short name 
+    memcpy(buf, short_name, 11);
+
+    // directory: allocate the first cluster and init it
+    if (dir) {
+        uint16_t top16, bottom16;
+
+        // attribute: archive and dir flags
+        buf[11] = 0x30;
+
+        ret = fat_allocate_cluster(0, &start_cluster);
+        if (ret == FAT_NOSPACE)
+            return FAT_INCONSISTENT;
+        fat_init_dir(start_cluster, folder->first_cluster);
+
+        // flush the newly-allocated cluster
+        fat_flush_fat();
+
+        // start cluster
+        top16 = (start_cluster >> 16 & 0xffff);
+        writeShort(&buf[0x14], top16);
+
+        bottom16 = (start_cluster & 0xffff);
+        writeShort(&buf[0x1a], bottom16);
+    }
+
+    // regular file
+    else {
+        // attribute: archive
+        buf[11] = 0x20;
+    }
+
+    // dates and times
+    date_field = (11) | (9 << 5) | (21 << 9); // 9/11/01
+    time_field = (46 << 5) | (8 << 11); // 8:46 AM
+    writeShort(&buf[14], time_field); // create
+    writeShort(&buf[16], date_field); // create
+    writeShort(&buf[18], date_field); // access
+    writeShort(&buf[22], time_field); // modify
+    writeShort(&buf[24], date_field); // modify
+
+    dir_buffer_dirty = 1;
+    _fat_flush_dir();
+
+    fat_readdir(result_de);
+
+    /*
+    fat_rewind(folder);
+    fat_debug_readdir(folder->cluster);
+    */
+
+    return FAT_SUCCESS;
 }
