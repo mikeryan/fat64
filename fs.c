@@ -431,11 +431,8 @@ static int _fat_load_dir_sector(fat_dirent *dirent) {
     uint32_t fat_entry;
 
     if (dirent->index == DE_PER_SECTOR) {
-        dirent->index = 0;
-        ++dirent->sector;
-
         // load the next cluster once we reach the end of this
-        if (dirent->sector == fat_fs.sect_per_clus) {
+        if (dirent->sector + 1 == fat_fs.sect_per_clus) {
             // look up the cluster number in the FAT
             fat_entry = fat_get_fat(dirent->cluster);
             if (fat_entry >= 0x0ffffff8) // last cluster
@@ -443,6 +440,11 @@ static int _fat_load_dir_sector(fat_dirent *dirent) {
 
             dirent->cluster = fat_entry;
             dirent->sector = 0;
+            dirent->index = 0;
+        }
+        else {
+            ++dirent->sector;
+            dirent->index = 0;
         }
     }
 
@@ -806,7 +808,7 @@ static int _fat_remaining_dirents(fat_dirent *dirent) {
     uint32_t cluster = dirent->cluster;
 
     // DE_PER_SECTOR for each unused sector in the cluster
-    remaining = DE_PER_SECTOR * fat_fs.sect_per_clus - dirent->sector;
+    remaining = DE_PER_SECTOR * (fat_fs.sect_per_clus - (dirent->sector + 1));
 
     // remaining in the current sector
     remaining += DE_PER_SECTOR - dirent->index;
@@ -961,17 +963,25 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, i
     num_dirents += (len - 1) / 13 + 1; // long filename
     // printf("Want to allocate %d dirents\n", num_dirents);
 
-    total_clusters = num_dirents + (dir ? 1 : 0); // allocate dir's first cluster
+    total_clusters = 0;
+
+    // add a cluster if we have to extend the directory for new dirents
+    if (num_dirents > _fat_remaining_dirents(folder))
+        ++total_clusters;
+    // add a cluster if we're creating a dir
+    if (dir)
+        ++total_clusters;
 
     // make sure we've got enough room
     if (fat_fs.free_clusters < total_clusters)
         return FAT_NOSPACE;
 
     ret = _fat_allocate_dirents(folder, num_dirents);
-    ret = FAT_SUCCESS;
     if (ret == FAT_NOSPACE)
         return FAT_INCONSISTENT;
 
+    // since we may have allocated a new cluster we must reload the dir
+    _fat_load_dir_sector(folder);
     *result_de = *folder;
 
     // copy it 13 bytes at a time
