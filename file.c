@@ -74,6 +74,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, i
     if (ret == FAT_NOSPACE)
         return FAT_INCONSISTENT;
 
+    _fat_load_dir_sector(folder);
     *result_de = *folder;
 
     // copy it 13 bytes at a time

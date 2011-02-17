@@ -77,11 +77,8 @@ int _fat_load_dir_sector(fat_dirent *dirent) {
     uint32_t fat_entry;
 
     if (dirent->index == DE_PER_SECTOR) {
-        dirent->index = 0;
-        ++dirent->sector;
-
         // load the next cluster once we reach the end of this
-        if (dirent->sector == fat_fs.sect_per_clus) {
+        if (dirent->sector + 1 == fat_fs.sect_per_clus) {
             // look up the cluster number in the FAT
             fat_entry = fat_get_fat(dirent->cluster);
             if (fat_entry >= 0x0ffffff8) // last cluster
@@ -89,6 +86,11 @@ int _fat_load_dir_sector(fat_dirent *dirent) {
 
             dirent->cluster = fat_entry;
             dirent->sector = 0;
+            dirent->index = 0;
+        }
+        else {
+            ++dirent->sector;
+            dirent->index = 0;
         }
     }
 
@@ -354,7 +356,7 @@ static int _fat_remaining_dirents(fat_dirent *dirent) {
     uint32_t cluster = dirent->cluster;
 
     // DE_PER_SECTOR for each unused sector in the cluster
-    remaining = DE_PER_SECTOR * fat_fs.sect_per_clus - dirent->sector;
+    remaining = DE_PER_SECTOR * (fat_fs.sect_per_clus - (dirent->sector + 1));
 
     // remaining in the current sector
     remaining += DE_PER_SECTOR - dirent->index;
