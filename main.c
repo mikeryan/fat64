@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include "common.h"
 
@@ -63,8 +64,8 @@ int main(int argc, char **argv) {
     // never leave a loaded gun lying around
     return 0;
 
-    test_find_create();
-    return 0;
+    // test_find_create();
+    // return 0;
 
     /*
     puts("testing set_size");
@@ -78,22 +79,21 @@ int main(int argc, char **argv) {
 
     puts("testing fat_open");
 
-    fat_file_t root_folder, menu_file, dirrr_dir;
+    fat_file_t root_folder, dir_file;
 
     fat_root(&root_folder);
 
-    ret = fat_open("menuu.bin", &root_folder, NULL, &menu_file);
+    ret = fat_open("dir.c", &root_folder, NULL, &dir_file);
+    printf("result: %s\n", fat_errstr(ret));
+
+    unsigned char buf[3690];
+    uint32_t r;
+    r = fat_read(&dir_file, buf, 1);
+
+    r = fat_read(&dir_file, buf, sizeof(buf));
+    printf("read %u\n", r);
+    write(0, buf, sizeof(buf));
     // ret = fat_find_create("menu.bin", &root_folder, &menu_file, 0, 0);
-    
-    printf("result: %s\n", fat_errstr(ret));
-
-    ret = fat_open("dirrr", &root_folder, "cd", &dirrr_dir);
-    printf("result: %s\n", fat_errstr(ret));
-
-    ret = fat_open("heya", &dirrr_dir, "", &menu_file);
-    printf("result: %s\n", fat_errstr(ret));
-    printf("size: %u\n", menu_file.de.size);
-
 
     return 0;
 

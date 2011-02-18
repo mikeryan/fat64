@@ -4,6 +4,9 @@
 
 #include "common.h"
 
+unsigned char file_buffer[512];
+uint32_t file_buffer_sector = 0;
+
 /**
  * Find a file by name in a directory. Create it if it doesn't exist. Use the
  * dir flag to specify that you want to create a directory.
@@ -39,7 +42,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, i
 }
 
 /**
- * TODO desc
+ * open a file a la fopen
  *
  * flags:
  *      c   create the file/directory if it doesn't exist
@@ -68,14 +71,77 @@ int fat_open(char *filename, fat_file_t *folder, char *flags, fat_file_t *file) 
         return ret;
 
     file->de = result_de;
-    file->de.first_cluster = result_de.start_cluster;
-    file->de.index = 0;
-    file->de.cluster = result_de.start_cluster;
-    file->de.sector = 0;
 
+    file->cluster = result_de.start_cluster;
+    file->sector = 0;
+    file->offset = 0;
     file->position = 0;
 
     return FAT_SUCCESS;
+}
+
+// load the current sector from the file
+// cut & paste code from _dir_load_sector :(
+static void _fat_load_file_sector(fat_file_t *file) {
+    uint32_t sector;
+    uint32_t fat_entry;
+
+    if (file->offset == 512) {
+        if (file->sector + 1 == fat_fs.sect_per_clus) {
+            // look up the cluster number in the FAT
+            fat_entry = fat_get_fat(file->cluster);
+            if (fat_entry >= 0x0ffffff8) // last cluster
+                abort(); // shouldn't happen!
+
+            file->cluster = fat_entry;
+            file->sector = 0;
+            file->offset = 0;
+        }
+        else {
+            ++file->sector;
+            file->offset = 0;
+        }
+    }
+
+    // sector may or may not have changed, but buffering makes this efficient
+    sector = CLUSTER_TO_SECTOR(file->cluster) + file->sector;
+
+    // TODO dirty file cluster?
+    if (file_buffer_sector != sector) {
+        cfReadSector(file_buffer, sector);
+        file_buffer_sector = sector;
+    }
+}
+
+/**
+ * Read len bytes out of file into buf.
+ *
+ * Returns the number of bytes read.
+ * If return value == 0, file is at EOF.
+ */
+uint32_t fat_read(fat_file_t *file, unsigned char *buf, uint32_t len) {
+    uint32_t bytes_read = 0;
+
+    if (file->position + len > file->de.size)
+        len = file->de.size - file->position;
+
+    while (bytes_read < len) {
+        int bytes_left;
+
+        _fat_load_file_sector(file);
+
+        bytes_left = 512 - file->offset;
+        if (bytes_read + bytes_left > len)
+            bytes_left = len - bytes_read;
+
+        memcpy(buf + bytes_read, file_buffer + file->offset, bytes_left);
+        bytes_read += bytes_left;
+        file->position += bytes_left;
+
+        file->offset += bytes_left;
+    }
+
+    return bytes_read;
 }
 
 /**

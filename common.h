@@ -59,7 +59,11 @@ typedef struct _fat_file_t {
 */
 struct _fat_file_t {
     fat_dirent de;
-    uint32_t position;
+
+    uint32_t cluster;   // current cluster
+    uint32_t sector;    // current sector in cluster
+    int offset;         // offset in sector [0, 512)
+    uint32_t position;  // absolute file position
 };
 
 /*************
