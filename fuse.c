@@ -67,9 +67,39 @@ static int readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t of
     return 0;
 }
 
+static int _fat_open(const char *path, struct fuse_file_info *fi) {
+    // can't open files in subdirs
+    if (strchr(path + 1, '/') != NULL)
+        return -EIO;
+
+    // only support read-only mode
+    if ((fi->flags & 3) != O_RDONLY)
+        return -EACCES;
+
+    fat_file_t root, file, *file_save;
+
+    fat_root(&root);
+    int ret = fat_open(path + 1, &root, NULL, &file);
+
+    // success: malloc a copy of the file struct and store it in the file_info_t
+    if (ret == FAT_SUCCESS) {
+        file_save = malloc(sizeof(fat_file_t));
+        *file_save = file;
+        fi->fh = (uintptr_t)file_save;
+        return 0;
+    }
+
+    if (ret == FAT_NOTFOUND)
+        return -ENOENT;
+
+    // some weird error
+    return -EIO;
+}
+
 static struct fuse_operations fat_oper = {
     .getattr        = getattr,
     .readdir        = readdir,
+    .open           = _fat_open,
 };
 
 int main(int argc, char **argv) {
