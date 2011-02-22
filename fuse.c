@@ -53,8 +53,23 @@ static int getattr(const char *path, struct stat *stbuf) {
     return ret;
 }
 
+static int readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
+    // don't support subdirs yet
+    if (strcmp(path, "/") != 0)
+        return -EIO;
+
+    fat_dirent root;
+    fat_root_dirent(&root);
+
+    while (fat_readdir(&root) > 0)
+        filler(buf, root.name, NULL, 0);
+
+    return 0;
+}
+
 static struct fuse_operations fat_oper = {
     .getattr        = getattr,
+    .readdir        = readdir,
 };
 
 int main(int argc, char **argv) {
