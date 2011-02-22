@@ -3,9 +3,7 @@
 
 typedef unsigned int uint32_t;
 typedef unsigned short uint16_t;
-
 typedef struct _fat_file_t fat_file_t;
-int fat_open(char *filename, fat_file_t *folder, char *flags, fat_file_t *file);
 
 char *fat_errstr(int code);
 
@@ -14,6 +12,8 @@ char *fat_errstr(int code);
 #define FAT_EOF 2
 #define FAT_NOTFOUND 3
 #define FAT_INCONSISTENT 256
+
+int fat_init(void);
 
 int fat_root(fat_file_t *file);
 

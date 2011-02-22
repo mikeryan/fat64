@@ -83,8 +83,14 @@ char *fat_errstr(int code) {
     return "unknown error";
 }
 
-int fatInit()
-{
+/**
+ * Init the file system.
+ *
+ * Returns:
+ *  0   success
+ *  1   failure, with message in message1 (FIXME)
+ */
+int fat_init(void) {
     char fat_systemid[8];
     uint32_t fat_num_resv_sect;
     uint32_t total_sectors, data_offset;

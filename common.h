@@ -124,8 +124,6 @@ void fat_disk_open(char *filename);
 /*
  * Etc.
  */
-int fatInit();
-
 int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size);
 int fat_get_sector(uint32_t start_cluster, uint32_t offset, uint32_t *sector, uint32_t *new_offset);
 

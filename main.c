@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
 
     fat_disk_open(argv[1]);
 
-    ret = fatInit();
+    ret = fat_init();
     if (ret != 0)
         errx(1, "%s", message1);
 
