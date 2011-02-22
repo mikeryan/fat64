@@ -17,7 +17,7 @@ uint32_t file_buffer_sector = 0;
  *   FAT_NOSPACE    file system full
  *   FAT_INCONSISTENT fs needs to be checked
  */
-int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir, int create) {
+int fat_find_create(const char *filename, fat_dirent *folder, fat_dirent *result_de, int dir, int create) {
     int ret;
 
     //
@@ -56,7 +56,7 @@ int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, i
  *   FAT_NOSPACE    file system full
  *   FAT_INCONSISTENT fs needs to be checked
  */
-int fat_open(char *filename, fat_file_t *folder, char *flags, fat_file_t *file) {
+int fat_open(const char *filename, fat_file_t *folder, char *flags, fat_file_t *file) {
     int dir, create, ret;
     fat_dirent folder_de, result_de;
 

@@ -81,7 +81,7 @@ void writeShort(unsigned char *dest, uint16_t val);
 /**
  * Files
  */
-int fat_find_create(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir, int create);
+int fat_find_create(const char *filename, fat_dirent *folder, fat_dirent *result_de, int dir, int create);
 int fat_set_size(fat_dirent *de, uint32_t size);
 
 /*
@@ -101,7 +101,7 @@ void fat_debug_readdir(uint32_t start_cluster);
 int fat_allocate_dirents(fat_dirent *dirent, int count);
 void fat_init_dir(uint32_t cluster, uint32_t parent);
 void fat_sub_dirent(uint32_t start_cluster, fat_dirent *de);
-int fat_dir_create_file(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir);
+int fat_dir_create_file(const char *filename, fat_dirent *folder, fat_dirent *result_de, int dir);
 
 // FIXME these should not be global
 // move them back into dir.c and make them static again

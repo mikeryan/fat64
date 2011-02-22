@@ -17,7 +17,7 @@ int fat_init(void);
 
 int fat_root(fat_file_t *file);
 
-int fat_open(char *filename, fat_file_t *folder, char *flags, fat_file_t *file);
+int fat_open(const char *filename, fat_file_t *folder, char *flags, fat_file_t *file);
 uint32_t fat_read(fat_file_t *file, unsigned char *buf, uint32_t len);
 
 #endif /* __FS_H__ */

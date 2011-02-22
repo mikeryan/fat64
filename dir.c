@@ -546,7 +546,7 @@ static void _copy_lfn_segment(fat_dirent *de, char *long_name, int segment) {
  *  FAT_NOSPACE     not enough space to create the dirent and/or first cluster of a dir
  *  FAT_INCONSISTENT    fs needs to be checked
  */
-int fat_dir_create_file(char *filename, fat_dirent *folder, fat_dirent *result_de, int dir) {
+int fat_dir_create_file(const char *filename, fat_dirent *folder, fat_dirent *result_de, int dir) {
     int ret, segment, i, num_dirents;
     uint32_t len;
     char long_name[256];
