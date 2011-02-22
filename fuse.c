@@ -103,11 +103,24 @@ static int _fat_release(const char *path, struct fuse_file_info *fi) {
     return 0;
 }
 
+static int _fat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
+    fat_file_t *file = (fat_file_t *)(uintptr_t)fi->fh;
+
+    // TODO support seeking in the file
+    if (offset != file->position)
+        return -EIO;
+
+    size = fat_read(file, (unsigned char *)buf, size);
+
+    return size;
+}
+
 static struct fuse_operations fat_oper = {
     .getattr        = getattr,
     .readdir        = readdir,
     .open           = _fat_open,
     .release        = _fat_release,
+    .read           = _fat_read,
 };
 
 int main(int argc, char **argv) {
