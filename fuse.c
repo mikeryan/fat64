@@ -96,10 +96,18 @@ static int _fat_open(const char *path, struct fuse_file_info *fi) {
     return -EIO;
 }
 
+// release is the equivalent of close
+// XXX what happens if this gets called multiple times, like with a dup'd fd?
+static int _fat_release(const char *path, struct fuse_file_info *fi) {
+    free((fat_file_t *)(uintptr_t)fi->fh);
+    return 0;
+}
+
 static struct fuse_operations fat_oper = {
     .getattr        = getattr,
     .readdir        = readdir,
     .open           = _fat_open,
+    .release        = _fat_release,
 };
 
 int main(int argc, char **argv) {
