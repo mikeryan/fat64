@@ -19,7 +19,7 @@ int fat_root(fat_file_t *file);
 
 // file operations
 int fat_open(const char *filename, fat_file_t *folder, char *flags, fat_file_t *file);
-uint32_t fat_read(fat_file_t *file, unsigned char *buf, uint32_t len);
+int32_t fat_read(fat_file_t *file, unsigned char *buf, int32_t len);
 int fat_file_isdir(fat_file_t *file);
 uint32_t fat_file_size(fat_file_t *file);
 

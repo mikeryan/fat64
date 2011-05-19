@@ -82,7 +82,11 @@ int fat_open(const char *filename, fat_file_t *folder, char *flags, fat_file_t *
 
 // load the current sector from the file
 // cut & paste code from _dir_load_sector :(
-static void _fat_load_file_sector(fat_file_t *file) {
+//
+// returns:
+//  FAT_SUCCESS         success
+//  FAT_INCONSISTENT    fs inconsistent
+static int _fat_load_file_sector(fat_file_t *file) {
     uint32_t sector;
     uint32_t fat_entry;
 
@@ -91,7 +95,7 @@ static void _fat_load_file_sector(fat_file_t *file) {
             // look up the cluster number in the FAT
             fat_entry = fat_get_fat(file->cluster);
             if (fat_entry >= 0x0ffffff8) // last cluster
-                abort(); // shouldn't happen!
+                return FAT_INCONSISTENT;
 
             file->cluster = fat_entry;
             file->sector = 0;
@@ -111,6 +115,8 @@ static void _fat_load_file_sector(fat_file_t *file) {
         cfReadSector(file_buffer, sector);
         file_buffer_sector = sector;
     }
+
+    return FAT_SUCCESS;
 }
 
 /**
@@ -118,9 +124,15 @@ static void _fat_load_file_sector(fat_file_t *file) {
  *
  * Returns the number of bytes read.
  * If return value == 0, file is at EOF.
+ *
+ * Return of -1 indicates error.
  */
-uint32_t fat_read(fat_file_t *file, unsigned char *buf, uint32_t len) {
+int32_t fat_read(fat_file_t *file, unsigned char *buf, int32_t len) {
     uint32_t bytes_read = 0;
+    int ret;
+
+    if (len < 0)
+        return -1;
 
     if (file->position + len > file->de.size)
         len = file->de.size - file->position;
@@ -128,7 +140,10 @@ uint32_t fat_read(fat_file_t *file, unsigned char *buf, uint32_t len) {
     while (bytes_read < len) {
         int bytes_left;
 
-        _fat_load_file_sector(file);
+        ret = _fat_load_file_sector(file);
+        // FIXME: fs_error() function
+        if (ret != FAT_SUCCESS)
+            return -1;
 
         bytes_left = 512 - file->offset;
         if (bytes_read + bytes_left > len)
