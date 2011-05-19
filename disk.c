@@ -1,11 +1,17 @@
-#include "common.h"
+#include <string.h>
 
-#ifdef LINUX // local test version of CF read/write
+#include "common.h"
+#include "ci.h"
+
+#ifdef LINUX
+
+/****************************
+ * stdio-based CF functions *
+ ***************************/
 
 #include <err.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string.h>
 
 // the disk image
 FILE *cf_file;
@@ -63,53 +69,51 @@ void fat_disk_open(char *filename) {
         err(1, "Couldn't open %s for reading", filename);
 }
 
-#else // FPGA versions of CF read/write
+#else
 
-void cfWaitCI()
-{
-    long timeout = 0;
-    char buf[8];
+/*****************
+ * 64drive CF IO *
+ ****************/
 
-    // poll the status register until it's good
-    do{
-        osPiReadIo(0xB8000200, buf); while(osPiGetStatus() != 0);
-        timeout++;
-        if(timeout == 50000000){
-            sprintf(message1, "Timed out.");
-            fail = 1;
-            return;
-        }
-    }while((buf[0] | buf[1] | buf[2] | buf[3]) != 0);
+#include <libdragon.h>
+
+
+/* Wait for CI status to be 0.
+ * Run before and after each command. */
+void ci_status_wait(void) {
+    while (io_read(CI_STATUS) != 0)
+        ;
 }
-
 
 void cfSectorToRam(uint32_t ramaddr, uint32_t lba)
 {
-    cfWaitCI();
+    ci_status_wait();
 
     // write LBA to the fpga register
-    osPiWriteIo(0xB8000000, lba ); while(osPiGetStatus() != 0);
-    osPiWriteIo(0xB8000004, ramaddr); while(osPiGetStatus() != 0);
+    io_write(CI_LBA, lba); ci_status_wait();
+
+    // osPiWriteIo(0xB8000004, ramaddr); while(osPiGetStatus() != 0);
+    io_write(CI_BUFFER, ramaddr); ci_status_wait();
 
     // write "read sector to ram" command
-    osPiWriteIo(0xB8000208, 2); while(osPiGetStatus() != 0);
+    io_write(CI_COMMAND, CI_CMD_READ_SECTOR);
 
-    cfWaitCI();
+    ci_status_wait();
 }
 
 void cfSectorsToRam(uint32_t ramaddr, uint32_t lba, int sectors)
 {
-    cfWaitCI();
+    ci_status_wait();
 
-    // write LBA to the fpga register
-    osPiWriteIo(0xB8000000, lba ); while(osPiGetStatus() != 0);
-    osPiWriteIo(0xB8000004, ramaddr); while(osPiGetStatus() != 0);
-    osPiWriteIo(0xB8000008, sectors); while(osPiGetStatus() != 0);
+    // write LBA, destination RAM, and length to the fpga registers
+    io_write(CI_LBA, lba);
+    io_write(CI_BUFFER, ramaddr);
+    io_write(CI_LENGTH, sectors);
 
     // write "read sectors to ram" command
-    osPiWriteIo(0xB8000208, 3); while(osPiGetStatus() != 0);
+    io_write(CI_COMMAND, CI_CMD_SECTORS_TO_SDRAM);
 
-    cfWaitCI();
+    ci_status_wait();
 }
 
 int cfOptimizeCycleTime()
@@ -148,35 +152,50 @@ int cfOptimizeCycleTime()
 
 void cfSetCycleTime(int cycletime)
 {
-    cfWaitCI();
+    ci_status_wait();
 
     // write cycletime to the fpga register
-    osPiWriteIo(0xB8000000, cycletime); while(osPiGetStatus() != 0);
+    io_write(CI_BUFFER, cycletime);
     // write "read sector" command
-    osPiWriteIo(0xB8000208, 0xfd); while(osPiGetStatus() != 0);
+    io_write(CI_COMMAND, CI_CMD_SET_CYCLETIME);
 
-    cfWaitCI();
+    ci_status_wait();
 }
 
 void cfReadSector(unsigned char *buffer, uint32_t lba)
 {
-    cfWaitCI();
+    ci_status_wait();
 
     // write LBA to the fpga register
-    osPiWriteIo(0xB8000000, lba); while(osPiGetStatus() != 0);
-    // write "read sector" command
-    osPiWriteIo(0xB8000208, 1); while(osPiGetStatus() != 0);
+    io_write(CI_LBA, lba);
 
-    cfWaitCI();
+    // write "read sector" command
+    io_write(CI_COMMAND, CI_CMD_READ_SECTOR);
+
+    ci_status_wait();
 
     // DANGER WILL ROBINSON
     // We are DMAing... if we don't write back all cached data, WE'RE FUCKED
-    osWritebackDCacheAll();
+    data_cache_writeback_invalidate(buffer, 512);
 
     // read the 512-byte onchip buffer (m9k on the fpga)
-    osPiRawStartDma(OS_READ, 0xB8000000, (u32)buffer, 512); while(osPiGetStatus() != 0);
+    dma_read((void *)((uint32_t)buffer & 0x1fffffff), CI_BUFFER, 512);
 
-    osPiReadIo(0xB0000000, (u32)buf); while(osPiGetStatus() != 0);
+    data_cache_writeback_invalidate(buffer, 512);
+}
+
+void cfWriteSector(unsigned char *buffer, uint32_t lba) {
+    ci_status_wait();
+
+    io_write(CI_LBA, lba);
+
+    data_cache_writeback_invalidate(buffer, 512);
+    dma_write((void *)((uint32_t)buffer & 0x1fffffff), CI_BUFFER, 512);
+    data_cache_writeback_invalidate(buffer, 512);
+
+    io_write(CI_COMMAND, CI_CMD_WRITE_SECTOR);
+
+    ci_status_wait();
 }
 
 #endif
