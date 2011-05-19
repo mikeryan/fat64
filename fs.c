@@ -1,5 +1,3 @@
-#ifdef LINUX
-
 #include <stdio.h>
 #include <string.h>
 
@@ -19,10 +17,10 @@ uint32_t fs_begin_sector;
 
 fat_fs_t fat_fs;
 
-int             compat_mode = 0;
-
 void fat_sector_offset(uint32_t cluster, uint32_t *fat_sector, uint32_t *fat_offset);
 
+#ifndef LINUX
+int             compat_mode = 0; // CF compat mode
 #endif
 
 // 2-byte number
@@ -44,7 +42,7 @@ void writeShort(unsigned char *dest, uint16_t val) {
 }
 
 // 4-byte number
-unsigned int intEndian(unsigned char *i)
+uint32_t intEndian(unsigned char *i)
 {
 #ifdef LINUX
     return *(uint32_t *)i;
@@ -128,7 +126,7 @@ int fat_init(void) {
 
     // copy the system ID string
     memcpy(fat_systemid, &buffer[82], 8);
-    fat_systemid[8] = 0;
+    fat_systemid[7] = 0;
 
     if(strncmp(fat_systemid, "FAT32", 5) != 0){
         // not a fat32 volume
