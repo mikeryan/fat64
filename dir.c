@@ -256,7 +256,7 @@ void fat_debug_readdir(uint32_t start_cluster) {
         int index = 0;
         int sector_index = 0;
 
-        printf("Cluster %08x\n", cluster);
+        printf("Cluster %08x\n", (unsigned int)cluster);
 
         if (cluster >= 0x0ffffff8) {
             printf("final cluster, done\n");
@@ -323,7 +323,7 @@ void fat_debug_readdir(uint32_t start_cluster) {
 
                 start_cluster = shortEndian(buffer + index + 0x14) << 16;
                 start_cluster |= shortEndian(buffer + index + 0x1a);
-                printf("    %-30s %u\n", "start cluster:", start_cluster);
+                printf("    %-30s %u\n", "start cluster:", (unsigned int)start_cluster);
                 if (buffer[index] == 0xe5)
                     printf("    %-30s\n", "deleted");
 

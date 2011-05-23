@@ -160,6 +160,48 @@ int32_t fat_read(fat_file_t *file, unsigned char *buf, int32_t len) {
 }
 
 /**
+ * Seek to absolute position in file.
+ * Returns:
+ *  FAT_SUCCESS on success
+ *  FAT_INCONSISTENT if the file system needs to be checked
+ */
+int fat_seek(fat_file_t *file, uint32_t position) {
+    uint32_t bytes_per_clus = fat_fs.sect_per_clus * 512;
+    uint32_t seek_left = position;
+
+    // trunc position
+    if (position > file->de.size) position = file->de.size;
+
+    file->sector = 0;
+
+    uint32_t cluster = file->de.start_cluster;
+
+    while (seek_left > 512) {
+        cluster = fat_get_fat(cluster);
+        if (cluster >= 0x0ffffff8)
+            return FAT_INCONSISTENT;
+
+        // found the right cluster, so find the right sector and offset
+        if (seek_left < bytes_per_clus) {
+            file->cluster = cluster;
+            while (seek_left >= 512) {
+                seek_left -= 512;
+                ++file->sector;
+            }
+        }
+
+        // more clusters to go
+        else
+            seek_left -= bytes_per_clus;
+    }
+
+    file->cluster = cluster;
+    file->offset = seek_left;
+    file->position = position;
+    return FAT_SUCCESS;
+}
+
+/**
  * Sets file size, adding and removing clusters as necessary.
  * Returns:
  *  FAT_SUCCESS on success
