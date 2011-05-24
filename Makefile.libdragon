@@ -1,4 +1,4 @@
-OBJS = dir.o disk.o fat.o file.o fs.o libdragon.o
+OBJS = dir.o disk.o fat.o file.o fs.o libdragon.o posix.o
 
 ROOTDIR = $(N64_INST)
 GCCN64PREFIX = $(ROOTDIR)/bin/mips64-elf-

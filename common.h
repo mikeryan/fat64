@@ -127,6 +127,16 @@ void fat_disk_open(char *filename);
 int fat_get_sectors(uint32_t start_cluster, uint32_t *sectors, int size);
 int fat_get_sector(uint32_t start_cluster, uint32_t offset, uint32_t *sector, uint32_t *new_offset);
 
+/* Directory walking */
+enum
+{
+    TYPE_ANY,
+    TYPE_FILE,
+    TYPE_DIR
+};
+
+int fat_recurse_path(const char * const path, fat_dirent *dirent, int type);
+
 // from fs.c
 extern char message1[4096];
 extern fat_fs_t fat_fs;

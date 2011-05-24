@@ -83,7 +83,7 @@ int main(int argc, char **argv) {
 
     fat_root(&root_folder);
 
-    ret = fat_open("dir.c", &root_folder, NULL, &dir_file);
+    ret = fat_open("/dir.c", NULL, &dir_file);
     printf("result: %s\n", fat_errstr(ret));
 
     unsigned char buf[3690];

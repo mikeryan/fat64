@@ -1,4 +1,4 @@
-OBJS = 64drive.o dir.o disk.o fat.o file.o fs.o
+OBJS = 64drive.o dir.o disk.o fat.o file.o fs.o posix.o
 
 CFLAGS = -DLINUX -g -Wall
 LDFLAGS = -lm

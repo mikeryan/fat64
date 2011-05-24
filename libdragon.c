@@ -21,14 +21,6 @@
 #define FLAGS_DIR           0x1
 #define FLAGS_EOF           0x2
 
-/* Directory walking return flags */
-enum
-{
-    TYPE_ANY,
-    TYPE_FILE,
-    TYPE_DIR
-};
-
 typedef struct _open_file_t {
     fat_file_t file;
     int open;
@@ -68,229 +60,13 @@ static fat_file_t *find_open_file(uint32_t x)
     return 0;
 }
 
-/* Parse out the next token in a path delimited by '\' */
-static char *get_next_token(char *path, char *token)
-{
-    if(!path)
-    {
-        /* Can't do shit */
-        return 0;
-    }
-
-    if(path[0] != 0)
-    {
-        /* We have at least one character in our owth */
-        if(path[0] == '/')
-        {
-            /* Root of path indicator */
-            if(token)
-            {
-                /* Just return the root indicator */
-                token[0] = '/';
-                token[1] = 0;
-            }
-
-            if(*(path + 1) == 0)
-            {
-                /* Don't return anything if we are at the end */
-                return 0;
-            }
-
-            /* Don't iterate over this same thing next time */
-            return path + 1;
-        }
-        else
-        {
-            /* Keep track of copied token so far to not buffer overflow */
-            int copied = 0;
-
-            while(path[0] != '/')
-            {
-                if(path[0] == 0)
-                {
-                    /* Hit the end */
-                    if(token)
-                    {
-                        /* Cap off the end */
-                        token[0] = 0;
-                    }
-
-                    /* Nothing comes after this string */
-                    return 0;
-                }
-
-                /* Only copy over if we need to */
-                if(token && copied < MAX_FILENAME_LEN)
-                {
-                    token[0] = path[0];
-                    token++;
-                    copied++;
-                }
-
-                /* Next entry */
-                path++;
-            }
-
-            if(token)
-            {
-                /* Cap off the end */
-                token[0] = 0;
-            }
-
-            /* Only way we can be here is if the current character is '\' */
-            if(*(path + 1) == 0)
-            {
-                return 0;
-            }
-
-            return path + 1;
-        }
-    }
-    else
-    {
-        if(token)
-        {
-            /* No token */
-            token[0] = 0;
-        }
-
-        /* Can't return a shorter path, there was none! */
-        return 0;
-    }
-}
-
-/* Walk a path string recursively
-
-   The result of this function is that the fat_dirent argument is populated with
-   the result of the recurseion.  If it is a file, the directory entry for the
-   file itself is returned.  If it is a directory, the directory entry of the
-   first file or directory inside that directory is returned.
-
-   The type specifier allows a person to specify that only a directory or file
-   should be returned. */
-static int recurse_path(const char * const path, fat_dirent *dirent, int type)
-{
-    int ret = FAT_SUCCESS;
-    char token[MAX_FILENAME_LEN+1];
-    char *cur_path = (char *)path;
-    int last_type = TYPE_ANY;
-    int ignore = 1; // Do not, by default, read again during the first while
-
-    fat_dirent dir_stack[MAX_DIRECTORY_DEPTH];
-    fat_root_dirent(&dir_stack[0]);
-    int depth = 1;
-
-#define PUSH(DE)                    \
-    if(depth < MAX_DIRECTORY_DEPTH) \
-    {                               \
-        dir_stack[depth] = (DE);    \
-        depth++;                    \
-    }
-#define POP() if(depth > 1) { --depth; }
-#define PEEK() dir_stack[depth-1]
-
-    /* Grab first token, make sure it isn't root */
-    cur_path = get_next_token(cur_path, token);
-
-    if(strcmp(token, "/") == 0)
-    {
-        /* Ensure that we remember this as a directory */
-        last_type = TYPE_DIR;
-
-        /* We need to read through the first while loop */
-        ignore = 0;
-    }
-
-    /* Loop through the rest */
-    while(cur_path || ignore)
-    {
-        /* Grab out the next token */
-        if(!ignore) { cur_path = get_next_token(cur_path, token); }
-        ignore = 0;
-
-        if(strcmp(token, "/") == 0 ||
-           strcmp(token, ".") == 0)
-        {
-            /* Ignore, this is current directory */
-            last_type = TYPE_DIR;
-        }
-        else if(strcmp(token, "..") == 0)
-        {
-            /* Up one directory */
-            POP();
-
-            last_type = TYPE_DIR;
-        }
-        else
-        {
-            /* Find directory entry, push */
-            fat_dirent tmp_node, tmp_dir;
-
-            tmp_dir = PEEK();
-
-            ret = fat_find_create(token, &tmp_dir, &tmp_node, 0, 0);
-
-            if(ret == FAT_SUCCESS)
-            {
-                /* Grab node, make sure it is a directory, push subdirectory, try again! */
-                fat_dirent node;
-
-                if (tmp_node.directory)
-                {
-                    /* Push subdirectory onto stack and loop */
-                    fat_sub_dirent(tmp_node.start_cluster, &node);
-                    PUSH(node);
-                    last_type = TYPE_DIR;
-                }
-                else
-                {
-                    last_type = TYPE_FILE;
-
-                    /* Only count if this is the last thing we are doing */
-                    if(!cur_path)
-                    {
-                        /* Push file entry onto stack in preparation of a return */
-                        PUSH(tmp_node);
-                    }
-                    else
-                    {
-                        /* Not found, this is a file */
-                        ret = FAT_NOTFOUND;
-                        break;
-                    }
-                }
-            }
-            else
-            {
-                /* Not found! */
-                ret = FAT_NOTFOUND;
-                break;
-            }
-        }
-    }
-
-    if(type != TYPE_ANY && type != last_type)
-    {
-        /* Found an entry, but it was the wrong type! */
-        ret = FAT_NOTFOUND;
-    }
-
-    /* Must return the node found if we found one */
-    if(ret == FAT_SUCCESS && dirent)
-    {
-        *dirent = PEEK();
-    }
-
-    return ret;
-}
-
 /* Find the first file or directory in a directory listing.  Supports absolute
    and relative.  If the path is invalid, returns a negative DFS_errno.  If
    a file or directory is found, returns the flags of the entry and copies the
    name into buf. */
 static int fat64_dir_findfirst(const char * const path, char *buf)
 {
-    int ret = recurse_path(path, &next_entry, TYPE_DIR);
+    int ret = fat_recurse_path(path, &next_entry, TYPE_DIR);
 
     /* Ensure that if this fails, they can't call findnext */
     valid_dir = 0;
@@ -356,20 +132,13 @@ static int fat64_open(const char * const path)
     }
 
     /* Try to find file */
-    fat_dirent dirent;
-    int ret = recurse_path(path, &dirent, TYPE_FILE);
+    int ret = fat_open(path, NULL, file);
 
     if(ret != FAT_SUCCESS)
     {
         /* File not found, or other error */
         return -ret;
     }
-
-    file->de = dirent;
-    file->cluster = dirent.start_cluster;
-    file->sector = 0;
-    file->position = 0;
-    // file->size = get_size(&t_node); // FIXME ?
 
     return handle;
 }
@@ -393,64 +162,15 @@ static int fat64_close(uint32_t handle)
 
 static int fat64_seek(uint32_t handle, int offset, int origin)
 {
+    int ret;
     fat_file_t *file = find_open_file(handle);
-    uint32_t position;
 
     if(!file)
     {
         return -1; // DFS_EBADHANDLE; FIXME
     }
 
-    switch(origin)
-    {
-        case SEEK_SET:
-            /* From the beginning */
-            if(offset < 0)
-            {
-                position = 0;
-            }
-            else
-            {
-                position = offset;
-            }
-
-            break;
-        case SEEK_CUR:
-        {
-            /* From the current position */
-            position = file->position + offset;
-
-            if(position < 0)
-            {
-                position = 0;
-            }
-
-            break;
-        }
-        case SEEK_END:
-        {
-            /* From the end of the file */
-            position = (int)file->de.size + offset;
-
-            if(position < 0)
-            {
-                position = 0;
-            }
-
-            break;
-        }
-        default:
-            /* Impossible */
-            return -1; // DFS_EBADINPUT; FIXME
-    }
-
-    /* Lets get some bounds checking */
-    if(position > file->de.size)
-    {
-        position = file->de.size;
-    }
-
-    int ret = fat_seek(file, position);
+    ret = fat_lseek(file, offset, origin);
     if (ret != FAT_SUCCESS)
         return -ret; // FIXME
 
@@ -467,7 +187,7 @@ static int fat64_tell(uint32_t handle)
         return -1; // DFS_EBADHANDLE; FIXME
     }
 
-    return file->position;
+    return fat_tell(file);
 }
 
 static int fat64_read(void * const buf, int len, uint32_t handle)
@@ -504,13 +224,11 @@ static int dfs_size(uint32_t handle)
 
 static void *__open( char *name, int flags )
 {
-    /* Always want a consistent interface */
-    // dfs_chdir("/");
-
     /* We disregard flags here */
     return (void *)fat64_open( name );
 }
 
+// TODO: use fuse's version
 static int __fstat( void *file, struct stat *st )
 {
     st->st_dev = 0;
@@ -658,7 +376,7 @@ int main(int argc, char **argv) {
 
     /*
     // test recurse on file
-    ret = recurse_path("/d1/d2/../d2/b", &rde, TYPE_FILE);
+    ret = fat_recurse_path("/d1/d2/../d2/b", &rde, TYPE_FILE);
     printf("return %d\nname %s\n", ret, rde.name);
     */
 
@@ -672,7 +390,7 @@ int main(int argc, char **argv) {
 
     /*
     // test recurse on dir
-    ret = recurse_path("/d1/", &rde, TYPE_DIR);
+    ret = fat_recurse_path("/d1/", &rde, TYPE_DIR);
     fat_readdir(&rde);
     printf("return %d\nname %s\n", ret, rde.name);
     */

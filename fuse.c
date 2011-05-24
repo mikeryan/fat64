@@ -21,11 +21,9 @@ static int getattr(const char *path, struct stat *stbuf) {
     }
 
     else {
-        fat_file_t root, file;
+        fat_file_t file;
 
-        fat_root(&root);
-
-        int fret = fat_open(path + 1, &root, "", &file);
+        int fret = fat_open(path, "", &file);
         if (fret == FAT_SUCCESS) {
             // TODO: date
             if (fat_file_isdir(&file)) {
@@ -76,10 +74,9 @@ static int _fat_open(const char *path, struct fuse_file_info *fi) {
     if ((fi->flags & 3) != O_RDONLY)
         return -EACCES;
 
-    fat_file_t root, file, *file_save;
+    fat_file_t file, *file_save;
 
-    fat_root(&root);
-    int ret = fat_open(path + 1, &root, NULL, &file);
+    int ret = fat_open(path, NULL, &file);
 
     // success: malloc a copy of the file struct and store it in the file_info_t
     if (ret == FAT_SUCCESS) {
@@ -124,7 +121,7 @@ static struct fuse_operations fat_oper = {
 };
 
 int main(int argc, char **argv) {
-    fat_disk_open("test/fat32.fs");
+    fat_disk_open("fs/fat32.fs");
     int ret = fat_init();
     if (ret != 0) {
         puts(message1);
