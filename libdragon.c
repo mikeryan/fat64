@@ -21,13 +21,6 @@
 #define FLAGS_DIR           0x1
 #define FLAGS_EOF           0x2
 
-/* Directory walking flags */
-enum
-{
-    WALK_CHDIR,
-    WALK_OPEN
-};
-
 /* Directory walking return flags */
 enum
 {
@@ -166,25 +159,20 @@ static char *get_next_token(char *path, char *token)
     }
 }
 
-/* Walk a path string, either changing directories or finding the right path
+/* Walk a path string recursively
 
-   If mode is WALK_CHDIR, the result of this function is entering into the new
-   directory on success, or the old directory being returned on failure.
-
-   If mode is WALK_OPEN, the result of this function is the directory remains
-   unchanged and a pointer to the directory entry for the requested file or
-   directory is returned.  If it is a file, the directory entry for the file
-   itself is returned.  If it is a directory, the directory entry of the first
-   file or directory inside that directory is returned.
+   The result of this function is that the fat_dirent argument is populated with
+   the result of the recurseion.  If it is a file, the directory entry for the
+   file itself is returned.  If it is a directory, the directory entry of the
+   first file or directory inside that directory is returned.
 
    The type specifier allows a person to specify that only a directory or file
-   should be returned.  This works for WALK_OPEN only. */
-static int recurse_path(const char * const path, int mode, fat_dirent *dirent, int type)
+   should be returned. */
+static int recurse_path(const char * const path, fat_dirent *dirent, int type)
 {
     int ret = FAT_SUCCESS;
     char token[MAX_FILENAME_LEN+1];
     char *cur_path = (char *)path;
-    // uint32_t dir_loc = directory_top;
     int last_type = TYPE_ANY;
     int ignore = 1; // Do not, by default, read again during the first while
 
@@ -200,9 +188,6 @@ static int recurse_path(const char * const path, int mode, fat_dirent *dirent, i
     }
 #define POP() if(depth > 1) { --depth; }
 #define PEEK() dir_stack[depth-1]
-
-    /* Save directory stack */
-    // memcpy(dir_stack, directories, sizeof(uint32_t) * MAX_DIRECTORY_DEPTH);
 
     /* Grab first token, make sure it isn't root */
     cur_path = get_next_token(cur_path, token);
@@ -259,28 +244,19 @@ static int recurse_path(const char * const path, int mode, fat_dirent *dirent, i
                 }
                 else
                 {
-                    if(mode == WALK_CHDIR)
+                    last_type = TYPE_FILE;
+
+                    /* Only count if this is the last thing we are doing */
+                    if(!cur_path)
+                    {
+                        /* Push file entry onto stack in preparation of a return */
+                        PUSH(tmp_node);
+                    }
+                    else
                     {
                         /* Not found, this is a file */
                         ret = FAT_NOTFOUND;
                         break;
-                    }
-                    else
-                    {
-                        last_type = TYPE_FILE;
-
-                        /* Only count if this is the last thing we are doing */
-                        if(!cur_path)
-                        {
-                            /* Push file entry onto stack in preparation of a return */
-                            PUSH(tmp_node);
-                        }
-                        else
-                        {
-                            /* Not found, this is a file */
-                            ret = FAT_NOTFOUND;
-                            break;
-                        }
                     }
                 }
             }
@@ -299,20 +275,10 @@ static int recurse_path(const char * const path, int mode, fat_dirent *dirent, i
         ret = FAT_NOTFOUND;
     }
 
-    if(mode == WALK_OPEN)
+    /* Must return the node found if we found one */
+    if(ret == FAT_SUCCESS && dirent)
     {
-        /* Must return the node found if we found one */
-        if(ret == FAT_SUCCESS && dirent)
-        {
-            *dirent = PEEK();
-        }
-    }
-
-    if(mode == WALK_OPEN || ret != FAT_SUCCESS)
-    {
-        /* Restore stack */
-        // directory_top = dir_loc;
-        // memcpy(directories, dir_stack, sizeof(uint32_t) * MAX_DIRECTORY_DEPTH);
+        *dirent = PEEK();
     }
 
     return ret;
@@ -324,7 +290,7 @@ static int recurse_path(const char * const path, int mode, fat_dirent *dirent, i
    name into buf. */
 static int fat64_dir_findfirst(const char * const path, char *buf)
 {
-    int ret = recurse_path(path, WALK_OPEN, &next_entry, TYPE_DIR);
+    int ret = recurse_path(path, &next_entry, TYPE_DIR);
 
     /* Ensure that if this fails, they can't call findnext */
     valid_dir = 0;
@@ -391,7 +357,7 @@ static int fat64_open(const char * const path)
 
     /* Try to find file */
     fat_dirent dirent;
-    int ret = recurse_path(path, WALK_OPEN, &dirent, TYPE_FILE);
+    int ret = recurse_path(path, &dirent, TYPE_FILE);
 
     if(ret != FAT_SUCCESS)
     {
@@ -692,7 +658,7 @@ int main(int argc, char **argv) {
 
     /*
     // test recurse on file
-    ret = recurse_path("/d1/d2/../d2/b", WALK_OPEN, &rde, TYPE_FILE);
+    ret = recurse_path("/d1/d2/../d2/b", &rde, TYPE_FILE);
     printf("return %d\nname %s\n", ret, rde.name);
     */
 
@@ -706,7 +672,7 @@ int main(int argc, char **argv) {
 
     /*
     // test recurse on dir
-    ret = recurse_path("/d1/", WALK_OPEN, &rde, TYPE_DIR);
+    ret = recurse_path("/d1/", &rde, TYPE_DIR);
     fat_readdir(&rde);
     printf("return %d\nname %s\n", ret, rde.name);
     */
