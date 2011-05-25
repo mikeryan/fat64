@@ -52,12 +52,6 @@ static int getattr(const char *path, struct stat *stbuf) {
 }
 
 static int readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
-    // don't support subdirs yet
-    /*
-    if (strcmp(path, "/") != 0)
-        return -EIO;
-        */
-
     fat_file_t dir;
     int ret;
 
@@ -90,12 +84,6 @@ static int readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t of
 }
 
 static int _fat_open(const char *path, struct fuse_file_info *fi) {
-    // can't open files in subdirs
-    /*
-    if (strchr(path + 1, '/') != NULL)
-        return -EIO;
-        */
-
     // only support read-only mode
     if ((fi->flags & 3) != O_RDONLY)
         return -EACCES;
@@ -120,7 +108,8 @@ static int _fat_open(const char *path, struct fuse_file_info *fi) {
 }
 
 // release is the equivalent of close
-// XXX what happens if this gets called multiple times, like with a dup'd fd?
+// if the file is opened multiple times (a la dup/dup2) this is called the last
+// time the file is closed
 static int _fat_release(const char *path, struct fuse_file_info *fi) {
     free((fat_file_t *)(uintptr_t)fi->fh);
     return 0;
