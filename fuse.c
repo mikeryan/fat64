@@ -129,9 +129,12 @@ static int _fat_release(const char *path, struct fuse_file_info *fi) {
 static int _fat_read(const char *path, char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     fat_file_t *file = (fat_file_t *)(uintptr_t)fi->fh;
 
-    // TODO support seeking in the file
-    if (offset != file->position)
-        return -EIO;
+    // seek if we're not at the right position
+    if (offset != file->position) {
+        int ret = fat_lseek(file, offset, SEEK_SET);
+        if (ret != FAT_SUCCESS)
+            return -EIO;
+    }
 
     size = fat_read(file, (unsigned char *)buf, size);
 
