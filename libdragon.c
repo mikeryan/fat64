@@ -356,7 +356,7 @@ int fat64_init(void)
 #include <err.h>
 
 int main(int argc, char **argv) {
-    int ret, i;
+    int ret;
     fat_dirent rde;
     char buf[1024];
 
@@ -366,6 +366,11 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // this is dumb... clear warnings
+    printf("here are the functions!\n%p %p %p %p %p %p %p\n",
+        fat64_dir_findfirst, fat64_dir_findnext,
+        __open, __fstat, __lseek, __read, __close);
+
     fat_disk_open(argv[1]);
 
     ret = fat_init();
@@ -374,11 +379,9 @@ int main(int argc, char **argv) {
 
     // fat_debug_readdir(fat_fs.root_cluster);
 
-    /*
     // test recurse on file
     ret = fat_recurse_path("/d1/d2/../d2/b", &rde, NULL, TYPE_FILE);
     printf("return %d\nname %s\n", ret, rde.name);
-    */
 
     /*
     // open multiple files
