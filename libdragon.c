@@ -66,7 +66,7 @@ static fat_file_t *find_open_file(uint32_t x)
    name into buf. */
 static int fat64_dir_findfirst(const char * const path, char *buf)
 {
-    int ret = fat_recurse_path(path, &next_entry, TYPE_DIR);
+    int ret = fat_recurse_path(path, &next_entry, NULL, TYPE_DIR);
 
     /* Ensure that if this fails, they can't call findnext */
     valid_dir = 0;
@@ -376,7 +376,7 @@ int main(int argc, char **argv) {
 
     /*
     // test recurse on file
-    ret = fat_recurse_path("/d1/d2/../d2/b", &rde, TYPE_FILE);
+    ret = fat_recurse_path("/d1/d2/../d2/b", &rde, NULL, TYPE_FILE);
     printf("return %d\nname %s\n", ret, rde.name);
     */
 
@@ -390,7 +390,7 @@ int main(int argc, char **argv) {
 
     /*
     // test recurse on dir
-    ret = fat_recurse_path("/d1/", &rde, TYPE_DIR);
+    ret = fat_recurse_path("/d1/", &rde, NULL, TYPE_DIR);
     fat_readdir(&rde);
     printf("return %d\nname %s\n", ret, rde.name);
     */

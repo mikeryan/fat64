@@ -59,6 +59,7 @@ typedef struct _fat_file_t {
 */
 struct _fat_file_t {
     fat_dirent de;
+    int dir;
 
     uint32_t cluster;   // current cluster
     uint32_t sector;    // current sector in cluster
@@ -135,7 +136,7 @@ enum
     TYPE_DIR
 };
 
-int fat_recurse_path(const char * const path, fat_dirent *dirent, int type);
+int fat_recurse_path(const char * const path, fat_dirent *dirent, int *ret_type, int type);
 
 // from fs.c
 extern char message1[4096];

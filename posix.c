@@ -33,14 +33,14 @@ static int _fat_load_file_sector(fat_file_t *file);
  *   FAT_INCONSISTENT fs needs to be checked
  */
 int fat_open(const char *filename, char *flags, fat_file_t *file) {
-    int dir, create, ret;
+    int dir, create, ret, ret_type;
     fat_dirent result_de;
 
     if (flags == NULL) flags = "";
     dir = strchr(flags, 'd') != NULL;
     create = strchr(flags, 'c') != NULL;
 
-    ret = fat_recurse_path(filename, &result_de, dir ? TYPE_DIR : TYPE_FILE);
+    ret = fat_recurse_path(filename, &result_de, &ret_type, TYPE_ANY);
 
     // attempt to create the file if it doesn't exist
     if (ret != FAT_SUCCESS) {
@@ -68,7 +68,7 @@ int fat_open(const char *filename, char *flags, fat_file_t *file) {
         memcpy(containing_dir, filename, len);
         containing_dir[len] = 0;
 
-        ret = fat_recurse_path(containing_dir, &folder_de, TYPE_DIR);
+        ret = fat_recurse_path(containing_dir, &folder_de, &ret_type, TYPE_DIR);
         if (ret != FAT_SUCCESS) return ret;
 
         // now we have the containing dir, so use that in fat_find_create
@@ -77,6 +77,7 @@ int fat_open(const char *filename, char *flags, fat_file_t *file) {
     }
 
     file->de = result_de;
+    file->dir = ret_type == TYPE_DIR;
 
     file->cluster = result_de.start_cluster;
     file->sector = 0;
@@ -338,7 +339,7 @@ static char *get_next_token(char *path, char *token)
 
    The type specifier allows a person to specify that only a directory or file
    should be returned. */
-int fat_recurse_path(const char * const path, fat_dirent *dirent, int type)
+int fat_recurse_path(const char * const path, fat_dirent *dirent, int *ret_type, int type)
 {
     int ret = FAT_SUCCESS;
     char token[MAX_FILENAME_LEN+1];
@@ -447,6 +448,8 @@ int fat_recurse_path(const char * const path, fat_dirent *dirent, int type)
     if(ret == FAT_SUCCESS && dirent)
     {
         *dirent = PEEK();
+
+        if (ret_type) *ret_type = last_type;
     }
 
     return ret;

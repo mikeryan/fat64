@@ -149,7 +149,7 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
  * Accessor: returns true if a file is a dir
  */
 int fat_file_isdir(fat_file_t *file) {
-    return file->de.directory ? 1 : 0;
+    return file->dir ? 1 : 0;
 }
 
 /**

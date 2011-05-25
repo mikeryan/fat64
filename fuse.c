@@ -23,7 +23,7 @@ static int getattr(const char *path, struct stat *stbuf) {
     else {
         fat_file_t file;
 
-        int fret = fat_open(path, "", &file);
+        int fret = fat_open(path, NULL, &file);
         if (fret == FAT_SUCCESS) {
             // TODO: date
             if (fat_file_isdir(&file)) {
@@ -53,22 +53,48 @@ static int getattr(const char *path, struct stat *stbuf) {
 
 static int readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
     // don't support subdirs yet
+    /*
     if (strcmp(path, "/") != 0)
         return -EIO;
+        */
 
-    fat_dirent root;
-    fat_root_dirent(&root);
+    fat_file_t dir;
+    int ret;
 
-    while (fat_readdir(&root) > 0)
-        filler(buf, root.name, NULL, 0);
+    ret = fat_open(path, NULL, &dir);
 
-    return 0;
+    // file found
+    if (ret == FAT_SUCCESS) {
+        // directory: fill 'er up
+        if (fat_file_isdir(&dir)) {
+            while (fat_readdir(&dir.de) > 0)
+                filler(buf, dir.de.name, NULL, 0);
+
+            ret = 0;
+        }
+
+        // not a directory, facplam
+        else
+            ret = -EIO;
+    }
+
+    // file not found
+    else if (ret == FAT_NOTFOUND)
+        ret = -ENOENT;
+
+    // something funky
+    else
+        ret = -EIO;
+
+    return ret;
 }
 
 static int _fat_open(const char *path, struct fuse_file_info *fi) {
     // can't open files in subdirs
+    /*
     if (strchr(path + 1, '/') != NULL)
         return -EIO;
+        */
 
     // only support read-only mode
     if ((fi->flags & 3) != O_RDONLY)
@@ -121,7 +147,7 @@ static struct fuse_operations fat_oper = {
 };
 
 int main(int argc, char **argv) {
-    fat_disk_open("fs/fat32.fs");
+    fat_disk_open("fat32.img");
     int ret = fat_init();
     if (ret != 0) {
         puts(message1);
