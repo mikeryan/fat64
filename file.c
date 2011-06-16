@@ -82,8 +82,15 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
         else {
             uint32_t prev = current;
             while ((current = fat_get_fat(current)) < 0x0ffffff8) {
+                uint32_t current_pos;
+
                 ++count;
                 prev = current;
+
+                // check for cyclical or too large FAT entries
+                current_pos = count * 512 * fat_fs.sect_per_clus;
+                if (current_pos > de->size)
+                    return FAT_INCONSISTENT;
             }
             current = prev;
             ++count; // account for terminating sector
@@ -122,6 +129,10 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
             de->start_cluster = 0;
 
         // zero the rest of the FAT entries
+        // n.b., this won't go into infinite loop on cyclical FAT lists
+        //   assume 2 -> 3 -> 2
+        //   2 gets set to 0, 3 gets set to 0, 2 is loaded again, value is 0
+        //   loop breaks, all good
         do {
             uint32_t next = fat_get_fat(current);
             fat_set_fat(current, 0);
