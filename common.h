@@ -34,6 +34,7 @@ typedef struct _fat_dirent {
     char short_name[13];
     char long_name[256];
     int directory;
+    int volume_label;
     uint32_t start_cluster;
     uint32_t size;
 

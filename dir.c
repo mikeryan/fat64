@@ -178,6 +178,7 @@ int fat_readdir(fat_dirent *dirent) {
         }
 
         dirent->directory = attributes & 0x10 ? 1 : 0;
+        dirent->volume_label = attributes & 0x08 ? 1 : 0;
 
         // you can thank FAT16 for this
         dirent->start_cluster = shortEndian(buffer + offset + 0x14) << 16;
