@@ -21,4 +21,12 @@
 #define CI_CMD_DISABLE_SDRAM_WR 0xf1
 #define CI_CMD_SET_CYCLETIME    0xfd
 
+#define CI_SAVE_NONE            0
+#define CI_SAVE_EEPROM_4K       1
+#define CI_SAVE_EEPROM_16K      2
+#define CI_SAVE_SRAM_256K       3
+#define CI_SAVE_FLASHRAM_1M     4
+#define CI_SAVE_FLASHRAM_PKMN   5
+#define CI_SAVE_SRAM_768K       6
+
 #endif /* __CI_H__ */
