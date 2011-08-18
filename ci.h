@@ -3,6 +3,7 @@
 
 #define CI_BUFFER       0x18000000  // read / write
 #define CI_STATUS       0x18000200  // read
+#define CI_SDRAM_ADDR   0x18000204  // write
 #define CI_COMMAND      0x18000208  // write
 #define CI_LBA          0x18000210  // write
 #define CI_LENGTH       0x18000218  // write

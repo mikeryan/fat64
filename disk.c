@@ -16,9 +16,6 @@
 // the disk image
 FILE *cf_file;
 
-#define osPiReadIo(X,Y) do { } while (0)
-#define osPiGetStatus() 0
-
 void cfSectorToRam(uint32_t ramaddr, uint32_t lba) {
 }
 
@@ -92,8 +89,8 @@ void cfSectorToRam(uint32_t ramaddr, uint32_t lba)
     // write LBA to the fpga register
     io_write(CI_LBA, lba); ci_status_wait();
 
-    // osPiWriteIo(0xB8000004, ramaddr); while(osPiGetStatus() != 0);
-    io_write(CI_BUFFER, ramaddr); ci_status_wait();
+    // write the SDRAM address to the RAM register
+    io_write(CI_SDRAM_ADDR, ramaddr); ci_status_wait();
 
     // write "read sector to ram" command
     io_write(CI_COMMAND, CI_CMD_READ_SECTOR);
@@ -107,7 +104,7 @@ void cfSectorsToRam(uint32_t ramaddr, uint32_t lba, int sectors)
 
     // write LBA, destination RAM, and length to the fpga registers
     io_write(CI_LBA, lba);
-    io_write(CI_BUFFER, ramaddr);
+    io_write(CI_SDRAM_ADDR, ramaddr);
     io_write(CI_LENGTH, sectors);
 
     // write "read sectors to ram" command
@@ -155,7 +152,7 @@ void cfSetCycleTime(int cycletime)
     ci_status_wait();
 
     // write cycletime to the fpga register
-    io_write(CI_BUFFER, cycletime);
+    io_write(CI_BUFFER, cycletime / 2); // divided by 2: kludge for 100 MHz -> 50 MHz
     // write "read sector" command
     io_write(CI_COMMAND, CI_CMD_SET_CYCLETIME);
 
