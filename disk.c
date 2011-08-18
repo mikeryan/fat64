@@ -159,6 +159,43 @@ void cfSetCycleTime(int cycletime)
     ci_status_wait();
 }
 
+void ciSetByteSwap(int byteswap)
+{
+    int cmd = byteswap ? CI_CMD_ENABLE_BYTESWAP : CI_CMD_DISABLE_BYTESWAP;
+
+    ci_status_wait();
+    io_write(CI_COMMAND, cmd);
+    ci_status_wait();
+}
+
+void ciSetSave(int savetype)
+{
+    ci_status_wait();
+
+    io_write(CI_BUFFER, savetype);
+    io_write(CI_COMMAND, CI_CMD_SET_SAVE_TYPE);
+
+    ci_status_wait();
+}
+
+void ciSetPersistentVar(unsigned int var)
+{
+    ci_status_wait();
+    io_write(CI_PERSISTENT, var);
+    ci_status_wait();
+}
+ 
+unsigned int ciGetPersistentVar()
+{
+    unsigned int ret = 0;
+
+    ci_status_wait();
+    ret = io_read(CI_PERSISTENT);
+    ci_status_wait();
+   
+    return ret;
+}
+ 
 void cfReadSector(unsigned char *buffer, uint32_t lba)
 {
     ci_status_wait();
@@ -193,6 +230,29 @@ void cfWriteSector(unsigned char *buffer, uint32_t lba) {
     io_write(CI_COMMAND, CI_CMD_WRITE_SECTOR);
 
     ci_status_wait();
+}
+
+// copy N64 RDRAM into 64drive EEPROM emulator
+void ciWriteEEPROMBuffer(unsigned char *buf, int start, int size)
+{
+    ci_status_wait();
+
+    data_cache_writeback_invalidate(buffer, 512);
+    dma_write((void *)((uint32_t)buffer & 0x1fffffff), CI_EEPROM + start, size);
+    data_cache_writeback_invalidate(buffer, 512);
+
+    ci_status_wait();
+}
+
+// copy N64 RDRAM into 64drive SRAM emulator
+void ciWriteLBAWBBuffer(unsigned char *buf, int start, int size)
+{
+    ci_status_wait();
+
+    // write the buffer
+    data_cache_writeback_invalidate(buffer, 512);
+    dma_write((void *)((uint32_t)buffer & 0x1fffffff), CI_SAVE_WB + start, size);
+    data_cache_writeback_invalidate(buffer, 512);
 }
 
 #endif

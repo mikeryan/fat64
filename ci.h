@@ -7,7 +7,8 @@
 #define CI_COMMAND      0x18000208  // write
 #define CI_LBA          0x18000210  // write
 #define CI_LENGTH       0x18000218  // write
-#define CI_REVISION     0x180002fc  // read
+#define CI_PERSISTENT   0x180002f4  // write
+#define CI_REVISION     0x180002fc  // read / write
 #define CI_EEPROM       0x18001000  // read / write
 #define CI_SAVE_WB      0x18001800  // read / write
 
