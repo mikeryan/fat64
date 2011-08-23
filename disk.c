@@ -78,7 +78,7 @@ void fat_disk_open(char *filename) {
 /* Wait for CI status to be 0.
  * Run before and after each command. */
 void ci_status_wait(void) {
-    while (io_read(CI_STATUS) != 0)
+    while ((io_read(CI_STATUS) >> 24) != 0)
         ;
 }
 
