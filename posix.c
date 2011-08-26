@@ -88,6 +88,20 @@ int fat_open(const char *filename, char *flags, fat_file_t *file) {
 }
 
 /**
+ * Open a file from a dirent. Assumes you've found the file you desire using
+ * fat_find_create.
+ */
+void fat_open_from_dirent(fat_file_t *file, fat_dirent *de) {
+    file->de = *de;
+    file->dir = 0; // FIXME ?
+
+    file->cluster = de->start_cluster;
+    file->sector = 0;
+    file->offset = 0;
+    file->position = 0;
+}
+
+/**
  * Read len bytes out of file into buf.
  *
  * Returns the number of bytes read.
