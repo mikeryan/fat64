@@ -2,7 +2,7 @@
 #define __FS_H__
 
 #include <stdint.h>
-#include <unistd.h>
+#include <sys/types.h>
 
 typedef struct _fat_file_t fat_file_t;
 

@@ -1,7 +1,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <stdlib.h>
-#include <unistd.h>
+#include <stdio.h> // oddly enough, pulls in SEEK_* constants
 
 #include "fs.h"
 #include "common.h"
