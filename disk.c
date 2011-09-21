@@ -87,10 +87,10 @@ void cfSectorToRam(uint32_t ramaddr, uint32_t lba)
     ci_status_wait();
 
     // write LBA to the fpga register
-    io_write(CI_LBA, lba); ci_status_wait();
+    io_write(CI_LBA, lba);
 
     // write the SDRAM address to the RAM register
-    io_write(CI_SDRAM_ADDR, ramaddr); ci_status_wait();
+    io_write(CI_SDRAM_ADDR, ramaddr);
 
     // write "read sector to ram" command
     io_write(CI_COMMAND, CI_CMD_READ_SECTOR);
