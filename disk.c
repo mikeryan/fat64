@@ -195,6 +195,17 @@ unsigned int ciGetPersistentVar()
    
     return ret;
 }
+
+/* Based on libdragon code for cache invalidation */
+#define cache_op(op) \
+    addr=(void*)(((unsigned long)addr)&(~3));\
+    for (;length>0;length-=4,addr+=4) \
+	asm ("\tcache %0,(%1)\n"::"i" (op), "r" (addr))
+
+static void _invalidate(volatile void * addr, unsigned long length)
+{
+    cache_op(0x1); // a little bird told me
+}
  
 void cfReadSector(unsigned char *buffer, uint32_t lba)
 {
@@ -210,12 +221,10 @@ void cfReadSector(unsigned char *buffer, uint32_t lba)
 
     // DANGER WILL ROBINSON
     // We are DMAing... if we don't write back all cached data, WE'RE FUCKED
-    data_cache_writeback_invalidate(buffer, 512);
+    _invalidate(buffer, 512);
 
     // read the 512-byte onchip buffer (m9k on the fpga)
     dma_read((void *)((uint32_t)buffer & 0x1fffffff), CI_BUFFER, 512);
-
-    data_cache_writeback_invalidate(buffer, 512);
 }
 
 void cfWriteSector(unsigned char *buffer, uint32_t lba) {
