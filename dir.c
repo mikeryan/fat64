@@ -124,7 +124,7 @@ int fat_readdir(fat_dirent *dirent) {
         return -1;
     }
 
-    if (dirent->long_name)
+    if (dirent->long_name[0])
         memset(dirent->long_name, 0, 256);
 
     do {
@@ -149,7 +149,7 @@ int fat_readdir(fat_dirent *dirent) {
         // long filename, copy the bytes and move along
         if (attributes == 0x0f) {
             segment = (buffer[offset] & 0x1F) - 1;
-            if (segment < 0 || segment > 19)
+            if (segment > 19)
                 continue; // invalid segment
 
             dest = (dirent->long_name + segment * 13);
