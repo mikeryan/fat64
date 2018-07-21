@@ -159,22 +159,23 @@ static int _fat_seek(fat_file_t *file, uint32_t position) {
     uint32_t cluster = file->de.start_cluster;
 
     while (seek_left > 512) {
-        cluster = fat_get_fat(cluster);
-        if (cluster >= 0x0ffffff8)
-            return FAT_INCONSISTENT;
+        // not on the right cluster yet, load the next one
+        if (seek_left > bytes_per_clus) {
+            cluster = fat_get_fat(cluster);
+            if (cluster >= 0x0ffffff8)
+                return FAT_INCONSISTENT;
+
+            seek_left -= bytes_per_clus;
+        }
 
         // found the right cluster, so find the right sector and offset
-        if (seek_left < bytes_per_clus) {
+        else {
             file->cluster = cluster;
             while (seek_left >= 512) {
                 seek_left -= 512;
                 ++file->sector;
             }
         }
-
-        // more clusters to go
-        else
-            seek_left -= bytes_per_clus;
     }
 
     file->cluster = cluster;
