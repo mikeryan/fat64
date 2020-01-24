@@ -1,4 +1,3 @@
-#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -54,8 +53,8 @@ int fat_set_size(fat_dirent *de, uint32_t size) {
     if (de->size == size)
         return 0;
 
-    current_clusters = ceil(1.0 * de->size / bytes_per_clus);
-    new_clusters = ceil(1.0 * size / bytes_per_clus);
+    current_clusters = (de->size / bytes_per_clus) + !!(de->size % bytes_per_clus);
+    new_clusters = (size / bytes_per_clus) + !!(size % bytes_per_clus);
 
     // expand file
     if (new_clusters > current_clusters) {
