@@ -1,7 +1,7 @@
 OBJS = 64drive.o dir.o disk.o fat.o file.o fs.o posix.o
 
 CFLAGS = -DLINUX -g -Wall -Werror
-LDFLAGS = -lm
+LDFLAGS =
 
 all: fs debug dragon_debug fuse64
 
